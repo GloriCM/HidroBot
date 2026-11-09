@@ -1,0 +1,9 @@
+# Frontend de HidroBot, listo para servir el build de React.
+# Node.js y PostgreSQL se suman a este archivo cuando exista el servidor.
+services:
+  web:
+    build: ./frontend
+    image: hidrobot-web
+    ports:
+      - "8080:80"
+    restart: unless-stopped
