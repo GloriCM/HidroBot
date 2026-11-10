@@ -17,7 +17,8 @@ export async function getZoneForUser(db, zoneId, userId) {
  */
 export async function getDeviceForUser(db, deviceId, userId) {
   const result = await db.query(
-    `SELECT d.id, d.name, d.zone_id, d.last_seen_at, d.created_at, d.api_key_hash,
+    `SELECT d.id, d.name, d.mqtt_id, d.zone_id, d.last_seen_at, d.created_at, d.api_key_hash,
+            d.online, d.last_source, d.last_pump,
             z.name AS zone_name, g.user_id, g.id AS garden_id
      FROM devices d
      JOIN zones z ON z.id = d.zone_id

@@ -55,10 +55,16 @@ export async function seedDemo(databaseUrl) {
     )
 
     const device = await client.query(
-      `INSERT INTO devices (zone_id, name, api_key_hash)
-       VALUES ($1, $2, $3)
-       RETURNING id`,
-      [zoneId, 'ESP32 demo', apiKeyHash],
+      `INSERT INTO devices (zone_id, name, api_key_hash, mqtt_id)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, mqtt_id`,
+      [zoneId, 'ESP32 demo', apiKeyHash, 'esp32-demo'],
+    )
+
+    await client.query(
+      `INSERT INTO device_calibration (device_id) VALUES ($1)
+       ON CONFLICT (device_id) DO NOTHING`,
+      [device.rows[0].id],
     )
 
     await client.query(
@@ -73,6 +79,7 @@ export async function seedDemo(databaseUrl) {
     console.log(`  email: ${DEMO_EMAIL}`)
     console.log(`  password: ${DEMO_PASSWORD}`)
     console.log(`  deviceId: ${device.rows[0].id}`)
+    console.log(`  mqttId: ${device.rows[0].mqtt_id}`)
     console.log(`  deviceKey: ${deviceKey}`)
     console.log('  Guarda deviceKey; no se vuelve a mostrar.')
 
@@ -81,6 +88,7 @@ export async function seedDemo(databaseUrl) {
       userId,
       zoneId,
       deviceId: device.rows[0].id,
+      mqttId: device.rows[0].mqtt_id,
       deviceKey,
     }
   } catch (error) {

@@ -7,10 +7,23 @@ const settingsSchema = z.object({
   watchPct: z.number().min(0).max(100).optional(),
   maxIrrigationSeconds: z.number().int().positive().max(600).optional(),
   mode: z.enum(['auto', 'manual']).optional(),
+  tankMinPct: z.number().min(0).max(100).optional(),
+  batteryMinPct: z.number().min(0).max(100).optional(),
+  allowManualOnBattery: z.boolean().optional(),
 })
 
 const deviceSchema = z.object({
   name: z.string().min(1).max(80).optional(),
+  mqttId: z.string().min(2).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional(),
+})
+
+const calibrationSchema = z.object({
+  humidityRawDry: z.number().int().optional(),
+  humidityRawWet: z.number().int().optional(),
+  distanceFullCm: z.number().optional(),
+  distanceEmptyCm: z.number().optional(),
+  batteryVEmpty: z.number().optional(),
+  batteryVFull: z.number().optional(),
 })
 
 const irrigateSchema = z.object({
@@ -46,27 +59,57 @@ export async function panelRoutes(app) {
   app.post('/api/zones/:zoneId/devices', async (request, reply) => {
     const parsed = deviceSchema.safeParse(request.body ?? {})
     if (!parsed.success) throw new AppError(400, 'Datos inválidos')
-    const created = await panelService.createDevice(
-      app,
-      request.user.id,
-      request.params.zoneId,
-      parsed.data.name || 'ESP32',
-    )
+    const created = await panelService.createDevice(app, request.user.id, request.params.zoneId, {
+      name: parsed.data.name || 'ESP32',
+      mqttId: parsed.data.mqttId,
+    })
     return reply.code(201).send(created)
   })
 
-  app.get('/api/devices/:deviceId/readings', async (request) => {
+  app.get('/api/devices/:deviceId/telemetry', async (request) => {
     const range = typeof request.query.range === 'string' ? request.query.range : '24h'
     if (!['1h', '6h', '12h', '24h'].includes(range)) {
       throw new AppError(400, 'range inválido')
     }
-    const series = await panelService.getReadingsSeries(
+    const series = await panelService.getTelemetrySeries(
       app,
       request.user.id,
       request.params.deviceId,
       range,
     )
     return { series }
+  })
+
+  app.get('/api/devices/:deviceId/readings', async (request) => {
+    const range = typeof request.query.range === 'string' ? request.query.range : '24h'
+    const series = await panelService.getTelemetrySeries(
+      app,
+      request.user.id,
+      request.params.deviceId,
+      range,
+    )
+    return { series }
+  })
+
+  app.get('/api/devices/:deviceId/calibration', async (request) => {
+    const calibration = await panelService.getDeviceCalibration(
+      app,
+      request.user.id,
+      request.params.deviceId,
+    )
+    return { calibration }
+  })
+
+  app.patch('/api/devices/:deviceId/calibration', async (request) => {
+    const parsed = calibrationSchema.safeParse(request.body ?? {})
+    if (!parsed.success) throw new AppError(400, 'Datos inválidos')
+    const calibration = await panelService.patchDeviceCalibration(
+      app,
+      request.user.id,
+      request.params.deviceId,
+      parsed.data,
+    )
+    return { calibration }
   })
 
   app.post('/api/zones/:zoneId/commands/irrigate', async (request) => {

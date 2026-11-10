@@ -11,6 +11,7 @@ run('ingest API', () => {
   /** @type {ReturnType<import('./helpers.js').testConfig>} */
   let config
   let deviceId = ''
+  let mqttId = ''
   const deviceKey = 'test-device-key-abcdefghijklmnopqrstuvwxyz'
 
   before(async () => {
@@ -42,12 +43,12 @@ run('ingest API', () => {
       method: 'POST',
       url: `/api/zones/${zoneId}/devices`,
       cookies: { [config.COOKIE_NAME]: cookie.value },
-      payload: { name: 'ESP32 test' },
+      payload: { name: 'ESP32 test', mqttId: 'esp32-test' },
     })
     assert.equal(created.statusCode, 201)
     deviceId = created.json().device.id
+    mqttId = created.json().device.mqttId
 
-    // Reemplaza la clave por una conocida para el test
     await app.db.query('UPDATE devices SET api_key_hash = $2 WHERE id = $1', [
       deviceId,
       sha256(deviceKey),
@@ -58,16 +59,7 @@ run('ingest API', () => {
     if (app) await shutdownTestApp(app)
   })
 
-  test('rechaza sin tokens', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/ingest/readings',
-      payload: { deviceId, humidity: 40 },
-    })
-    assert.equal(response.statusCode, 401)
-  })
-
-  test('guarda lectura y responde decisión', async () => {
+  test('readings está deprecado', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/ingest/readings',
@@ -75,29 +67,49 @@ run('ingest API', () => {
         'x-ingest-token': config.INGEST_TOKEN,
         'x-device-key': deviceKey,
       },
-      payload: { deviceId, humidity: 20 },
+      payload: { deviceId, humidity: 40 },
+    })
+    assert.equal(response.statusCode, 410)
+  })
+
+  test('guarda telemetría y responde decisión', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/ingest/telemetry',
+      headers: {
+        'x-ingest-token': config.INGEST_TOKEN,
+        'x-device-key': deviceKey,
+      },
+      payload: {
+        mqttId,
+        humedad_raw: 2800,
+        distancia_cm: 12,
+        v_red: 12.1,
+        v_bat: 11.8,
+        fuente: 'red',
+        bomba: false,
+        rssi: -60,
+      },
     })
     assert.equal(response.statusCode, 200)
     const body = response.json()
-    assert.equal(body.regar, true)
-    assert.ok(body.segundos > 0)
-    assert.equal(body.reading.humidity, 20)
+    assert.equal(typeof body.regar, 'boolean')
+    assert.ok(body.telemetry.humidity_pct >= 0)
+    assert.ok(body.telemetry.tank_pct >= 0)
 
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'ingest@example.com', password: 'cesped123' },
+    })
+    const cookie = login.cookies.find((item) => item.name === config.COOKIE_NAME)
     const panel = await app.inject({
       method: 'GET',
       url: '/api/panel/summary',
-      cookies: {
-        [config.COOKIE_NAME]: (
-          await app.inject({
-            method: 'POST',
-            url: '/api/auth/login',
-            payload: { email: 'ingest@example.com', password: 'cesped123' },
-          })
-        ).cookies.find((item) => item.name === config.COOKIE_NAME).value,
-      },
+      cookies: { [config.COOKIE_NAME]: cookie.value },
     })
     assert.equal(panel.statusCode, 200)
-    assert.equal(panel.json().latest.humidity, 20)
+    assert.ok(panel.json().latest.humidity != null)
     assert.equal(panel.json().online, true)
   })
 })

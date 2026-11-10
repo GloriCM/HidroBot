@@ -22,6 +22,9 @@ const schema = z.object({
   SEED: bool.default(false),
   TELEGRAM_BOT_TOKEN: z.string().optional().default(''),
   TRUST_PROXY: bool.default(true),
+  NODERED_COMMAND_URL: z.string().optional().default(''),
+  NODERED_TOKEN: z.string().optional().default(''),
+  NODERED_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
 })
 
 export function loadConfig(env = process.env) {

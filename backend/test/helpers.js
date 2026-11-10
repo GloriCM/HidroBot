@@ -22,6 +22,9 @@ export function testConfig(overrides = {}) {
     SEED: false,
     TELEGRAM_BOT_TOKEN: '',
     TRUST_PROXY: true,
+    NODERED_COMMAND_URL: '',
+    NODERED_TOKEN: '',
+    NODERED_TIMEOUT_MS: 3000,
     ...overrides,
   }
 }

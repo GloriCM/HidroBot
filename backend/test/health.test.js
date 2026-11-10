@@ -7,6 +7,8 @@ import { testConfig } from './helpers.js'
 test('GET /api/health responde estructura básica sin DB', async () => {
   const config = testConfig({
     DATABASE_URL: 'postgres://invalid:invalid@127.0.0.1:1/none',
+    NODERED_COMMAND_URL: '',
+    NODERED_TOKEN: '',
   })
 
   const app = await buildApp({ config })

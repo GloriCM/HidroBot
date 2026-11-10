@@ -89,20 +89,23 @@ set DATABASE_URL=postgres://hidrobot:hidrobot@127.0.0.1:5432/hidrobot
 npm test
 ```
 
-## Probar ingesta
+## Probar telemetría (ESP32 / Node-RED)
 
-1. Entra al panel → Configuración → **Vincular ESP32** y copia la clave.
-2. Envía una lectura (vía nginx del `web`):
+1. Panel → Configuración → **Vincular ESP32** (`mqtt_id`, p. ej. `esp32-1`) y guarda la clave en `DEVICE_API_KEYS` de Node-RED.
+2. Importa el flujo [`nodered/hidrobot-flow.json`](nodered/hidrobot-flow.json).
+3. Prueba directa a la API:
 
 ```bash
-curl -sS -X POST http://localhost:8080/api/ingest/readings \
+curl -sS -X POST http://localhost:8080/api/ingest/telemetry \
   -H "Content-Type: application/json" \
   -H "X-Ingest-Token: TU_INGEST_TOKEN" \
   -H "X-Device-Key: CLAVE_DEL_DISPOSITIVO" \
-  -d '{"deviceId":"UUID-DEL-DISPOSITIVO","humidity":42.5}'
+  -d '{"mqttId":"esp32-1","humedad_raw":2140,"distancia_cm":23.5,"v_red":12.1,"v_bat":11.8,"fuente":"red","bomba":false,"rssi":-67}'
 ```
 
-Respuesta esperada: `{ "regar": true|false, "segundos": n, "motivo": "..." }`.
+Respuesta: `{ "regar": true|false, "segundos": n, "motivo": "...", "telemetry": {...} }`.
+
+`POST /api/ingest/readings` está deprecado (410).
 
 ## Stack
 
