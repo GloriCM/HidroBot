@@ -1,9 +1,68 @@
-# Frontend de HidroBot, listo para servir el build de React.
-# Node.js y PostgreSQL se suman a este archivo cuando exista el servidor.
+# HidroBot: web (frontend) + api (backend).
+# PostgreSQL local solo con: docker compose --profile local up -d --build
+# En producción: DATABASE_URL apunta a Postgres externo (override del servidor).
+
 services:
   web:
     build: ./frontend
     image: hidrobot-web
     ports:
       - "8080:80"
+    depends_on:
+      - api
+    mem_limit: 128m
     restart: unless-stopped
+
+  api:
+    build: ./backend
+    image: hidrobot-api
+    env_file:
+      - .env
+    environment:
+      PORT: "3000"
+      # En perfil local Compose inyecta DATABASE_URL hacia el servicio db.
+      DATABASE_URL: ${DATABASE_URL}
+      SESSION_SECRET: ${SESSION_SECRET}
+      INGEST_TOKEN: ${INGEST_TOKEN}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      COMMAND_TTL_MINUTES: ${COMMAND_TTL_MINUTES:-10}
+      DEVICE_OFFLINE_MINUTES: ${DEVICE_OFFLINE_MINUTES:-15}
+      READINGS_RETENTION_DAYS: ${READINGS_RETENTION_DAYS:-90}
+      ALERT_COOLDOWN_MINUTES: ${ALERT_COOLDOWN_MINUTES:-30}
+      SEED: ${SEED:-0}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+    mem_limit: 256m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+
+  db:
+    profiles: ["local"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hidrobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hidrobot}
+      POSTGRES_DB: ${POSTGRES_DB:-hidrobot}
+    volumes:
+      - hidrobot_pg:/var/lib/postgresql/data
+    # Sin ports publicados: solo red interna de Compose.
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  hidrobot_pg:
