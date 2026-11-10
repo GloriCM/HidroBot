@@ -63,6 +63,32 @@ docker compose --profile local up -d --build
 
 Usuario demo: `demo@hidrobot.local` / `cesped123` (solo si `SEED=1`).
 
+## Autenticación
+
+- `POST /api/auth/register` — crea usuario, jardín/zona por defecto y cookie de sesión
+- `POST /api/auth/login` — cookie httpOnly; límite de intentos por IP (CF-Connecting-IP) + email
+- `POST /api/auth/logout`
+- `GET /api/auth/me` — requiere sesión
+
+Las contraseñas usan argon2. Los tokens de sesión se guardan como SHA-256.
+
+## Tests
+
+```bash
+cd backend
+npm test
+```
+
+Los tests de auth/ingesta necesitan Postgres:
+
+```bash
+# Con el stack local arriba:
+set DATABASE_URL=postgres://hidrobot:hidrobot@127.0.0.1:5432/hidrobot
+# (en PowerShell: $env:DATABASE_URL="...")
+# Publica temporalmente el puerto de db solo para tests locales, o usa un Postgres en el host.
+npm test
+```
+
 ## Probar ingesta (cuando el endpoint esté activo)
 
 ```bash

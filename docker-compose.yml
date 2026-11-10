@@ -55,7 +55,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-hidrobot}
     volumes:
       - hidrobot_pg:/var/lib/postgresql/data
-    # Sin ports publicados: solo red interna de Compose.
+    # Sin ports en producción/local por defecto. Para tests en el host:
+    # en docker-compose.override.yml local puedes mapear "5432:5432".
     mem_limit: 512m
     restart: unless-stopped
     healthcheck:
