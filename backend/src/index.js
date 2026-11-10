@@ -2,6 +2,7 @@ import { loadConfig } from './config.js'
 import { buildApp } from './app.js'
 import { closePool } from './db/pool.js'
 import { runMigrations } from './db/migrate.js'
+import { startMaintenanceJobs } from './jobs/maintenance.js'
 import { seedDemo } from './seed/demo.js'
 
 async function main() {
@@ -21,6 +22,7 @@ async function main() {
   }
 
   const app = await buildApp({ config })
+  const stopJobs = startMaintenanceJobs(app)
 
   await app.listen({ port: config.PORT, host: '0.0.0.0' })
   console.log(`API escuchando en :${config.PORT}`)
@@ -28,6 +30,7 @@ async function main() {
   const shutdown = async (signal) => {
     console.log(`Señal ${signal}, cerrando…`)
     try {
+      stopJobs()
       await app.close()
       await closePool()
     } finally {

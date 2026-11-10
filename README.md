@@ -89,15 +89,20 @@ set DATABASE_URL=postgres://hidrobot:hidrobot@127.0.0.1:5432/hidrobot
 npm test
 ```
 
-## Probar ingesta (cuando el endpoint esté activo)
+## Probar ingesta
+
+1. Entra al panel → Configuración → **Vincular ESP32** y copia la clave.
+2. Envía una lectura (vía nginx del `web`):
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/ingest/readings \
   -H "Content-Type: application/json" \
-  -H "X-Ingest-Token: $INGEST_TOKEN" \
-  -H "X-Device-Key: $DEVICE_KEY" \
+  -H "X-Ingest-Token: TU_INGEST_TOKEN" \
+  -H "X-Device-Key: CLAVE_DEL_DISPOSITIVO" \
   -d '{"deviceId":"UUID-DEL-DISPOSITIVO","humidity":42.5}'
 ```
+
+Respuesta esperada: `{ "regar": true|false, "segundos": n, "motivo": "..." }`.
 
 ## Stack
 

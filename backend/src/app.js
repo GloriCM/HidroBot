@@ -6,6 +6,8 @@ import { isAppError } from './lib/errors.js'
 import { setupAuth } from './plugins/auth.js'
 import { authRoutes } from './routes/auth.js'
 import { healthRoutes } from './routes/health.js'
+import { ingestRoutes } from './routes/ingest.js'
+import { panelRoutes } from './routes/panel.js'
 
 /**
  * @param {{ config: ReturnType<import('./config.js').loadConfig> }} opts
@@ -33,6 +35,8 @@ export async function buildApp({ config }) {
 
   await app.register(healthRoutes, { databaseUrl: config.DATABASE_URL })
   await app.register(authRoutes)
+  await app.register(panelRoutes)
+  await app.register(ingestRoutes)
 
   app.setErrorHandler((error, _request, reply) => {
     if (isAppError(error)) {
