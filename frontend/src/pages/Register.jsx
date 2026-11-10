@@ -13,11 +13,20 @@ const empty = {
 }
 
 export default function Register() {
-  const { user, register } = useAuth()
+  const { user, ready, register } = useAuth()
   const navigate = useNavigate()
   const [form, setForm] = useState(empty)
   const [show, setShow] = useState(false)
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  if (!ready) {
+    return (
+      <Gate>
+        <p className="py-8 text-sm font-bold text-[#5d7384]">Comprobando sesión…</p>
+      </Gate>
+    )
+  }
 
   if (user) {
     return <Navigate to="/panel" replace />
@@ -27,7 +36,7 @@ export default function Register() {
     setForm((current) => ({ ...current, [key]: value }))
   }
 
-  function onSubmit(event) {
+  async function onSubmit(event) {
     event.preventDefault()
     setError('')
     if (form.name.trim().length < 2) {
@@ -46,8 +55,9 @@ export default function Register() {
       setError('Las contraseñas no coinciden.')
       return
     }
+    setLoading(true)
     try {
-      register({
+      await register({
         name: form.name,
         email: form.email,
         password: form.password,
@@ -55,7 +65,9 @@ export default function Register() {
       })
       navigate('/panel')
     } catch (err) {
-      setError(err.message)
+      setError(err.message || 'No se pudo crear la cuenta.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -77,10 +89,11 @@ export default function Register() {
           autoComplete="name"
           value={form.name}
           onChange={(event) => update('name', event.target.value)}
-          className="h-[2.35em] w-full rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3 text-[1em] text-[#16324a] outline-none"
+          className="h-[2.35em] w-full rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3 text-[1em] text-[#16324a] outline-none disabled:opacity-60"
           placeholder="Tu nombre"
           aria-label="Nombre"
           maxLength={80}
+          disabled={loading}
         />
         <input
           id="email"
@@ -88,19 +101,21 @@ export default function Register() {
           autoComplete="email"
           value={form.email}
           onChange={(event) => update('email', event.target.value)}
-          className="h-[2.35em] w-full rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3 text-[1em] text-[#16324a] outline-none"
+          className="h-[2.35em] w-full rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3 text-[1em] text-[#16324a] outline-none disabled:opacity-60"
           placeholder="tu@correo.com"
           aria-label="Correo"
           maxLength={120}
+          disabled={loading}
         />
         <input
           id="garden"
           value={form.garden}
           onChange={(event) => update('garden', event.target.value)}
-          className="h-[2.35em] w-full rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3 text-[1em] text-[#16324a] outline-none"
+          className="h-[2.35em] w-full rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3 text-[1em] text-[#16324a] outline-none disabled:opacity-60"
           placeholder="Nombre del jardín"
           aria-label="Nombre del jardín"
           maxLength={80}
+          disabled={loading}
         />
         <div className="flex items-center rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3">
           <input
@@ -109,11 +124,18 @@ export default function Register() {
             autoComplete="new-password"
             value={form.password}
             onChange={(event) => update('password', event.target.value)}
-            className="h-[2.35em] w-full bg-transparent text-[1em] text-[#16324a] outline-none"
+            className="h-[2.35em] w-full bg-transparent text-[1em] text-[#16324a] outline-none disabled:opacity-60"
             placeholder="Contraseña, mínimo 8"
             aria-label="Contraseña"
+            disabled={loading}
           />
-          <button className="shrink-0 text-[#8aa0ae]" type="button" onClick={() => setShow((value) => !value)} aria-label={show ? 'Ocultar contraseña' : 'Ver contraseña'}>
+          <button
+            className="shrink-0 text-[#8aa0ae] disabled:opacity-60"
+            type="button"
+            onClick={() => setShow((value) => !value)}
+            aria-label={show ? 'Ocultar contraseña' : 'Ver contraseña'}
+            disabled={loading}
+          >
             {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
@@ -123,17 +145,22 @@ export default function Register() {
           autoComplete="new-password"
           value={form.confirm}
           onChange={(event) => update('confirm', event.target.value)}
-          className="h-[2.35em] w-full rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3 text-[1em] text-[#16324a] outline-none"
+          className="h-[2.35em] w-full rounded-xl border border-[#d7e3ee] bg-[#f8fbfe] px-3 text-[1em] text-[#16324a] outline-none disabled:opacity-60"
           placeholder="Repite la contraseña"
           aria-label="Confirmar contraseña"
+          disabled={loading}
         />
         {error && (
           <p className="text-[0.85em] font-bold text-[#b42318]" role="alert">
             {error}
           </p>
         )}
-        <button className="mt-1 h-[2.45em] rounded-xl bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] text-[1em] font-bold text-white" type="submit">
-          Crear cuenta
+        <button
+          className="mt-1 h-[2.45em] rounded-xl bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] text-[1em] font-bold text-white disabled:opacity-70"
+          type="submit"
+          disabled={loading}
+        >
+          {loading ? 'Creando cuenta…' : 'Crear cuenta'}
         </button>
       </form>
       <Link

@@ -1,140 +1,105 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { api, ApiError } from '../lib/api'
 import { AuthContext } from './auth-context'
 
-const KEY_USERS = 'hidrobot_users'
-const KEY_SESSION = 'hidrobot_session'
+const LEGACY_KEYS = ['hidrobot_users', 'hidrobot_session']
 
-const DEMO = {
-  name: 'Demo',
-  email: 'demo@hidrobot.local',
-  password: 'cesped123',
-  garden: 'Jardín principal',
-}
-
-function save(key, value) {
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    /* El navegador puede bloquear el almacenamiento. La sesión sigue en memoria. */
+function clearLegacyAuth() {
+  for (const key of LEGACY_KEYS) {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      /* ignore */
+    }
   }
 }
 
-function readUsers() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(KEY_USERS) || '[]')
-    const users = Array.isArray(parsed) ? parsed : []
-    if (!users.some((user) => user.email === DEMO.email)) {
-      users.unshift(DEMO)
-      save(KEY_USERS, JSON.stringify(users))
-    }
-    return users
-  } catch {
-    return [DEMO]
+function mapAuthPayload(data) {
+  const gardens = Array.isArray(data?.gardens) ? data.gardens : []
+  const user = data?.user
+  if (!user) return { user: null, gardens: [] }
+  return {
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      garden: gardens[0]?.name || 'Mi jardín',
+    },
+    gardens,
   }
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    readUsers()
-    try {
-      const raw = localStorage.getItem(KEY_SESSION)
-      return raw ? JSON.parse(raw) : null
-    } catch {
-      return null
-    }
-  })
+  const [user, setUser] = useState(null)
+  const [gardens, setGardens] = useState([])
+  const [ready, setReady] = useState(false)
 
-  const api = useMemo(() => {
-    function persist(next) {
-      const session = {
-        name: next.name,
-        email: next.email,
-        garden: next.garden,
+  useEffect(() => {
+    clearLegacyAuth()
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const data = await api.me()
+        if (cancelled) return
+        const mapped = mapAuthPayload(data)
+        setUser(mapped.user)
+        setGardens(mapped.gardens)
+      } catch (error) {
+        if (cancelled) return
+        if (!(error instanceof ApiError && (error.status === 401 || error.status === 0))) {
+          console.warn('No se pudo restaurar la sesión', error)
+        }
+        setUser(null)
+        setGardens([])
+      } finally {
+        if (!cancelled) setReady(true)
       }
-      save(KEY_SESSION, JSON.stringify(session))
-      setUser(session)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const value = useMemo(() => {
+    function applySession(data) {
+      const mapped = mapAuthPayload(data)
+      setUser(mapped.user)
+      setGardens(mapped.gardens)
+      return mapped
     }
 
     return {
       user,
-      register({ name, email, password, garden }) {
-        const users = readUsers()
-        const normalized = email.trim().toLowerCase()
-        if (users.some((item) => item.email === normalized)) {
-          throw new Error('Ya existe una cuenta con ese correo.')
-        }
-        const next = {
-          name: name.trim(),
-          email: normalized,
-          password,
-          garden: garden.trim() || 'Mi jardín',
-        }
-        users.push(next)
-        save(KEY_USERS, JSON.stringify(users))
-        persist(next)
+      gardens,
+      ready,
+      async register(input) {
+        const data = await api.register(input)
+        return applySession(data)
       },
-      login({ email, password }) {
-        const found = readUsers().find(
-          (item) => item.email === email.trim().toLowerCase() && item.password === password,
-        )
-        if (!found) {
-          throw new Error('Correo o contraseña incorrectos.')
-        }
-        persist(found)
+      async login(input) {
+        const data = await api.login(input)
+        return applySession(data)
       },
-      loginWithGoogle() {
-        const users = readUsers()
-        const email = 'cuenta.google@gmail.com'
-        let found = users.find((item) => item.email === email)
-        if (!found) {
-          found = {
-            name: 'Cuenta de Google',
-            email,
-            password: '',
-            garden: 'Jardín principal',
-          }
-          users.push(found)
-          save(KEY_USERS, JSON.stringify(users))
-        }
-        persist(found)
-      },
-      updateProfile({ name, email, garden }) {
-        const users = readUsers()
-        const index = users.findIndex((item) => item.email === user.email)
-        if (index < 0) throw new Error('No se encontró la cuenta.')
-        const normalized = email.trim().toLowerCase()
-        if (users.some((item, itemIndex) => itemIndex !== index && item.email === normalized)) {
-          throw new Error('Ya existe una cuenta con ese correo.')
-        }
-        const next = {
-          ...users[index],
-          name: name.trim(),
-          email: normalized,
-          garden: garden.trim() || 'Mi jardín',
-        }
-        users[index] = next
-        save(KEY_USERS, JSON.stringify(users))
-        persist(next)
-      },
-      resetPassword({ current, next }) {
-        const users = readUsers()
-        const index = users.findIndex((item) => item.email === user.email)
-        if (index < 0) throw new Error('No se encontró la cuenta.')
-        if (users[index].password !== current) throw new Error('La contraseña actual no coincide.')
-        if (next.length < 8) throw new Error('La contraseña necesita al menos 8 caracteres.')
-        users[index] = { ...users[index], password: next }
-        save(KEY_USERS, JSON.stringify(users))
-      },
-      logout() {
+      async logout() {
         try {
-          localStorage.removeItem(KEY_SESSION)
+          await api.logout()
         } catch {
-          /* sigue el cierre en memoria */
+          /* cierra igual en el cliente */
         }
         setUser(null)
+        setGardens([])
+      },
+      async updateProfile() {
+        throw new Error('La edición de perfil en el servidor estará disponible pronto.')
+      },
+      async resetPassword() {
+        throw new Error('El cambio de contraseña en el servidor estará disponible pronto.')
       },
     }
-  }, [user])
+  }, [user, gardens, ready])
 
-  return <AuthContext.Provider value={api}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

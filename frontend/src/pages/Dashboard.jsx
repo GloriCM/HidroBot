@@ -52,7 +52,7 @@ function clock() {
 }
 
 export default function Dashboard() {
-  const { user, logout, updateProfile, resetPassword } = useAuth()
+  const { user, ready, logout, updateProfile, resetPassword } = useAuth()
   const [value, setValue] = useState(68)
   const [online, setOnline] = useState(true)
   const [pump, setPump] = useState(false)
@@ -121,6 +121,14 @@ export default function Dashboard() {
     return next.slice(-count)
   }, [base, range, value])
 
+  if (!ready) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-[linear-gradient(160deg,#3aa0e8_0%,#7ed0ff_32%,#b6ef8a_68%,#3dae55_100%)] text-[#07182b]">
+        <p className="rounded-2xl bg-white/80 px-6 py-4 font-bold shadow">Cargando panel…</p>
+      </div>
+    )
+  }
+
   if (!user) return <Navigate to="/ingresar" replace />
 
   const state = moistureState(value)
@@ -187,7 +195,7 @@ export default function Dashboard() {
     reader.readAsDataURL(file)
   }
 
-  function saveProfile(event) {
+  async function saveProfile(event) {
     event.preventDefault()
     setProfileNote('')
     setProfileError('')
@@ -201,7 +209,7 @@ export default function Dashboard() {
       return
     }
     try {
-      updateProfile({ name: draft.name, email, garden: draft.garden })
+      await updateProfile({ name: draft.name, email, garden: draft.garden })
       if (email !== user.email) {
         const current = readPhoto(user.email)
         if (current) {
@@ -220,7 +228,7 @@ export default function Dashboard() {
     }
   }
 
-  function savePassword(event) {
+  async function savePassword(event) {
     event.preventDefault()
     setProfileNote('')
     setProfileError('')
@@ -229,7 +237,7 @@ export default function Dashboard() {
       return
     }
     try {
-      resetPassword({ current: passwords.current, next: passwords.next })
+      await resetPassword({ current: passwords.current, next: passwords.next })
       setPasswords({ current: '', next: '', confirm: '' })
       setProfileNote('Contraseña actualizada.')
     } catch (err) {
@@ -313,7 +321,14 @@ export default function Dashboard() {
                     <button className="flex w-full items-center gap-3 px-4 py-3 text-left font-bold text-[#16324a] hover:bg-[#f4f8fb]" type="button" role="menuitem" onClick={() => { setSection('perfil'); setProfileTab('datos'); setMenu(false) }}>
                       <User className="h-4 w-4" /> Perfil
                     </button>
-                    <button className="flex w-full items-center gap-3 border-t border-[#e7eef3] px-4 py-3 text-left font-bold text-[#16324a] hover:bg-[#f4f8fb]" type="button" role="menuitem" onClick={logout}>
+                    <button
+                      className="flex w-full items-center gap-3 border-t border-[#e7eef3] px-4 py-3 text-left font-bold text-[#16324a] hover:bg-[#f4f8fb]"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        void logout()
+                      }}
+                    >
                       <LogOut className="h-4 w-4" /> Cerrar sesión
                     </button>
                   </div>
