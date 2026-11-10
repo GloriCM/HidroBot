@@ -66,8 +66,12 @@ export default function Dashboard() {
     { id: 3, time: 'Hace 1 h', text: 'Riego automático desactivado.', ok: false },
   ])
   const [menu, setMenu] = useState(false)
-  const [photo, setPhoto] = useState(() => readPhoto(user.email))
-  const [draft, setDraft] = useState({ name: user.name, email: user.email, garden: user.garden || '' })
+  const [photo, setPhoto] = useState(() => readPhoto(user?.email))
+  const [draft, setDraft] = useState(() => ({
+    name: user?.name || '',
+    email: user?.email || '',
+    garden: user?.garden || '',
+  }))
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
   const [profileNote, setProfileNote] = useState('')
   const [profileError, setProfileError] = useState('')
@@ -79,9 +83,10 @@ export default function Dashboard() {
   useEffect(() => () => clearTimeout(timer.current), [])
 
   useEffect(() => {
+    if (!user) return
     setPhoto(readPhoto(user.email))
     setDraft({ name: user.name, email: user.email, garden: user.garden || '' })
-  }, [user.email, user.name, user.garden])
+  }, [user])
 
   useEffect(() => {
     if (!menu) return undefined
