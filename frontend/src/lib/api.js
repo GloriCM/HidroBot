@@ -53,4 +53,21 @@ export const api = {
   login: (body) => request('/api/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   register: (body) => request('/api/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   logout: () => request('/api/auth/logout', { method: 'POST' }),
+
+  panelSummary: () => request('/api/panel/summary'),
+  readings: (deviceId, range) =>
+    request(`/api/devices/${deviceId}/readings?range=${encodeURIComponent(range)}`),
+  patchSettings: (zoneId, body) =>
+    request(`/api/zones/${zoneId}/settings`, { method: 'PATCH', body: JSON.stringify(body) }),
+  createDevice: (zoneId, body = {}) =>
+    request(`/api/zones/${zoneId}/devices`, { method: 'POST', body: JSON.stringify(body) }),
+  irrigate: (zoneId, body = {}) =>
+    request(`/api/zones/${zoneId}/commands/irrigate`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  stopIrrigation: (zoneId) =>
+    request(`/api/zones/${zoneId}/commands/stop`, { method: 'POST', body: '{}' }),
+  alerts: () => request('/api/alerts'),
+  markAlertRead: (id) => request(`/api/alerts/${id}/read`, { method: 'PATCH', body: '{}' }),
 }

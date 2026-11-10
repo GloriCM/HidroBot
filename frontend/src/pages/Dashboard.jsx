@@ -12,13 +12,13 @@ import {
   Settings,
   User,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useAuth } from '../hooks/useAuth'
+import { api } from '../lib/api'
 import { moistureState } from '../lib/moisture'
 
-const hours = ['12AM', '2AM', '4AM', '6AM', '8AM', '10AM', '12PM', '2PM', '4PM', '6PM', '8PM', '10PM', '12AM']
 const nav = [
   { id: 'inicio', label: 'Inicio', icon: Home },
   { id: 'historial', label: 'Historial', icon: ChartColumn },
@@ -38,33 +38,30 @@ function readPhoto(email) {
   }
 }
 
-function buildSeries() {
-  let value = 62
-  return hours.map((hour, index) => {
-    value += Math.sin(index / 2.1) * 5 + ((index * 3) % 4) - 2
-    value = Math.min(78, Math.max(48, value))
-    return { hour, humedad: Math.round(value) }
-  })
-}
-
-function clock() {
-  return new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+const emptySummary = {
+  zone: null,
+  settings: null,
+  device: null,
+  latest: null,
+  series: [],
+  irrigations: [],
+  alerts: [],
+  online: false,
+  pump: false,
 }
 
 export default function Dashboard() {
   const { user, ready, logout, updateProfile, resetPassword } = useAuth()
-  const [value, setValue] = useState(68)
-  const [online, setOnline] = useState(true)
-  const [pump, setPump] = useState(false)
-  const [auto, setAuto] = useState(true)
-  const [alerts, setAlerts] = useState(() => localStorage.getItem('hidrobot_alerts') !== 'off')
-  const [section, setSection] = useState('inicio')
+  const [summary, setSummary] = useState(emptySummary)
+  const [series, setSeries] = useState([])
   const [range, setRange] = useState('24h')
-  const [logs, setLogs] = useState([
-    { id: 1, time: 'Hace 1 min', text: 'Sistema funcionando correctamente.', ok: true },
-    { id: 2, time: 'Hace 5 min', text: 'Humedad en rango óptimo.', ok: true },
-    { id: 3, time: 'Hace 1 h', text: 'Riego automático desactivado.', ok: false },
-  ])
+  const [section, setSection] = useState('inicio')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [actionNote, setActionNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [newApiKey, setNewApiKey] = useState('')
   const [menu, setMenu] = useState(false)
   const [photo, setPhoto] = useState(() => readPhoto(user?.email))
   const [draft, setDraft] = useState(() => ({
@@ -76,11 +73,58 @@ export default function Dashboard() {
   const [profileNote, setProfileNote] = useState('')
   const [profileError, setProfileError] = useState('')
   const [profileTab, setProfileTab] = useState('datos')
-  const timer = useRef(null)
   const menuRef = useRef(null)
-  const base = useMemo(() => buildSeries(), [])
 
-  useEffect(() => () => clearTimeout(timer.current), [])
+  const loadSummary = useCallback(async () => {
+    try {
+      const data = await api.panelSummary()
+      setSummary(data)
+      setError('')
+      return data
+    } catch (err) {
+      setError(err.message || 'No se pudieron cargar los datos del panel.')
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const loadSeries = useCallback(async (deviceId, nextRange) => {
+    if (!deviceId) {
+      setSeries([])
+      return
+    }
+    try {
+      const data = await api.readings(deviceId, nextRange)
+      setSeries(
+        (data.series || []).map((point) => ({
+          label: point.label,
+          humedad: point.humidity,
+        })),
+      )
+    } catch {
+      /* el resumen ya muestra el error principal */
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!ready || !user) return undefined
+    let cancelled = false
+    ;(async () => {
+      const data = await loadSummary()
+      if (cancelled || !data?.device?.id) return
+      await loadSeries(data.device.id, range)
+    })()
+    const id = setInterval(() => {
+      void loadSummary().then((data) => {
+        if (data?.device?.id) void loadSeries(data.device.id, range)
+      })
+    }, 8000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [ready, user, loadSummary, loadSeries, range])
 
   useEffect(() => {
     if (!user) return
@@ -104,23 +148,6 @@ export default function Dashboard() {
     }
   }, [menu])
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      setValue((current) => {
-        const drift = pump ? 1.4 : (Math.random() - 0.55) * 0.8
-        return Math.min(92, Math.max(22, current + drift))
-      })
-    }, 1500)
-    return () => clearInterval(id)
-  }, [pump])
-
-  const series = useMemo(() => {
-    const next = base.map((point) => ({ ...point }))
-    next[next.length - 1].humedad = Math.round(value)
-    const count = range === '1h' ? 2 : range === '6h' ? 4 : range === '12h' ? 7 : next.length
-    return next.slice(-count)
-  }, [base, range, value])
-
   if (!ready) {
     return (
       <div className="grid min-h-screen place-items-center bg-[linear-gradient(160deg,#3aa0e8_0%,#7ed0ff_32%,#b6ef8a_68%,#3dae55_100%)] text-[#07182b]">
@@ -131,44 +158,37 @@ export default function Dashboard() {
 
   if (!user) return <Navigate to="/ingresar" replace />
 
-  const state = moistureState(value)
-  const status = !online ? 'Sin red' : state.key === 'ok' ? 'Óptima' : state.key === 'watch' ? 'Vigilar' : 'Baja'
+  const value = summary.latest?.humidity
+  const threshold = summary.settings?.thresholdPct ?? 35
+  const watch = summary.settings?.watchPct ?? 55
+  const auto = summary.settings?.mode !== 'manual'
+  const online = summary.online
+  const pump = summary.pump
+  const state = moistureState(value, threshold, watch)
+  const status = !summary.device
+    ? 'Sin dispositivo'
+    : !online
+      ? 'Sin red'
+      : state.key === 'ok'
+        ? 'Óptima'
+        : state.key === 'watch'
+          ? 'Vigilar'
+          : state.key === 'dry'
+            ? 'Baja'
+            : 'Sin datos'
   const now = new Date().toLocaleString('es-CO', {
+    timeZone: 'America/Bogota',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   })
+  const chartData = series.length
+    ? series
+    : (summary.series || []).map((point) => ({ label: point.label, humedad: point.humidity }))
 
-  function push(text, ok = true) {
-    setLogs((list) => [{ id: Date.now(), time: 'Ahora', text, ok }, ...list].slice(0, 6))
-  }
-
-  function startWater() {
-    if (!online || pump) return
-    setPump(true)
-    push('Riego manual. El agua sale del tanque hacia los aspersores.')
-    clearTimeout(timer.current)
-    timer.current = setTimeout(() => {
-      setPump(false)
-      push('Riego terminado. La bomba quedó apagada.')
-    }, 8000)
-  }
-
-  function loseConnection() {
-    clearTimeout(timer.current)
-    setPump(false)
-    setOnline(false)
-    push('Se perdió la conexión. La bomba se apagó para proteger el tanque.', false)
-  }
-
-  function restore() {
-    setOnline(true)
-    push('Conexión HTTP restablecida con el servidor.')
-  }
-
-  function onPhoto(event) {
+  async function onPhoto(event) {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file || !file.type.startsWith('image/')) return
@@ -199,29 +219,8 @@ export default function Dashboard() {
     event.preventDefault()
     setProfileNote('')
     setProfileError('')
-    const email = draft.email.trim().toLowerCase()
-    if (draft.name.trim().length < 2) {
-      setProfileError('Escribe tu nombre.')
-      return
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setProfileError('Escribe un correo válido.')
-      return
-    }
     try {
-      await updateProfile({ name: draft.name, email, garden: draft.garden })
-      if (email !== user.email) {
-        const current = readPhoto(user.email)
-        if (current) {
-          try {
-            localStorage.setItem(photoKey(email), current)
-            localStorage.removeItem(photoKey(user.email))
-          } catch {
-            /* la foto sigue en esta visita */
-          }
-          setPhoto(current)
-        }
-      }
+      await updateProfile({ name: draft.name, email: draft.email, garden: draft.garden })
       setProfileNote('Cambios guardados.')
     } catch (err) {
       setProfileError(err.message)
@@ -245,17 +244,57 @@ export default function Dashboard() {
     }
   }
 
-  function toggleAlerts() {
-    setAlerts((current) => {
-      const next = !current
-      try {
-        localStorage.setItem('hidrobot_alerts', next ? 'on' : 'off')
-      } catch {
-        /* preferencia solo en memoria */
-      }
-      push(next ? 'Alertas de Telegram activas.' : 'Alertas de Telegram en pausa.', next)
-      return next
-    })
+  async function startWater() {
+    if (!summary.zone?.id || busy) return
+    setBusy(true)
+    setActionError('')
+    setActionNote('')
+    try {
+      await api.irrigate(summary.zone.id)
+      setActionNote('Comando de riego enviado. Se aplicará en la próxima lectura del ESP32.')
+      await loadSummary()
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function toggleAuto() {
+    if (!summary.zone?.id || busy) return
+    setBusy(true)
+    setActionError('')
+    try {
+      await api.patchSettings(summary.zone.id, { mode: auto ? 'manual' : 'auto' })
+      await loadSummary()
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function createDevice() {
+    if (!summary.zone?.id || busy) return
+    setBusy(true)
+    setActionError('')
+    setActionNote('')
+    setNewApiKey('')
+    try {
+      const created = await api.createDevice(summary.zone.id, { name: 'ESP32' })
+      setNewApiKey(created.apiKey)
+      setActionNote('Dispositivo creado. Guarda la clave: no se volverá a mostrar.')
+      await loadSummary()
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function changeRange(next) {
+    setRange(next)
+    if (summary.device?.id) await loadSeries(summary.device.id, next)
   }
 
   const show = (id) => section === 'inicio' || section === id
@@ -415,21 +454,35 @@ export default function Dashboard() {
             </article>
           ) : (
           <>
+          {error && (
+            <p className={`${glass} mb-3 px-4 py-3 text-sm font-bold text-[#b42318]`} role="alert">
+              {error}
+            </p>
+          )}
+          {loading && (
+            <p className={`${glass} mb-3 px-4 py-3 text-sm font-bold text-[#0a3d6b]`}>Actualizando datos…</p>
+          )}
+
           <section className="mb-4 grid gap-3 md:grid-cols-3">
             <article className={`${glass} p-4`}>
               <div className="flex items-center gap-3">
                 <span className="grid h-12 w-12 place-items-center rounded-full bg-[#1d6eab] text-white"><Droplets className="h-5 w-5" /></span>
                 <div>
                   <p className="text-sm font-semibold text-[#0a3d6b]">Humedad del césped</p>
-                  <p className="text-2xl font-extrabold">{Math.round(value)}% <span className="text-sm font-bold text-[#1f9d4a]">{status}</span></p>
+                  <p className="text-2xl font-extrabold">
+                    {value == null ? '—' : `${Math.round(value)}%`}{' '}
+                    <span className="text-sm font-bold text-[#1f9d4a]">{status}</span>
+                  </p>
                 </div>
               </div>
               <div className="mt-2 h-10">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={series}>
-                    <Area type="monotone" dataKey="humedad" stroke="#1d6eab" fill="#1d6eab" fillOpacity={0.12} strokeWidth={2} dot={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
+                {chartData.length > 0 && (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData}>
+                      <Area type="monotone" dataKey="humedad" stroke="#1d6eab" fill="#1d6eab" fillOpacity={0.12} strokeWidth={2} dot={false} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </article>
             <article className={`${glass} p-4`}>
@@ -437,15 +490,8 @@ export default function Dashboard() {
                 <span className="grid h-12 w-12 place-items-center rounded-full bg-[#22a34a] text-white"><ChartColumn className="h-5 w-5" /></span>
                 <div>
                   <p className="text-sm font-semibold text-[#0a3d6b]">Umbral de riego</p>
-                  <p className="text-2xl font-extrabold">35%</p>
+                  <p className="text-2xl font-extrabold">{threshold}%</p>
                 </div>
-              </div>
-              <div className="mt-2 h-10">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={series}>
-                    <Area type="monotone" dataKey="humedad" stroke="#22a34a" fill="#22a34a" fillOpacity={0.12} strokeWidth={2} dot={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
               </div>
             </article>
             <article className={`${glass} p-4`}>
@@ -467,21 +513,27 @@ export default function Dashboard() {
                   <h2 className="flex items-center gap-2 font-extrabold"><ChartColumn className="h-4 w-4 text-[#0a3d6b]" /> Historial de humedad</h2>
                   <div className="flex gap-1 text-xs font-bold text-[#6b8494]">
                     {['1h', '6h', '12h', '24h'].map((item) => (
-                      <button key={item} type="button" className={`rounded-full px-2 py-1 ${range === item ? 'bg-[#16324a] text-white' : ''}`} onClick={() => setRange(item)}>
+                      <button key={item} type="button" className={`rounded-full px-2 py-1 ${range === item ? 'bg-[#16324a] text-white' : ''}`} onClick={() => { void changeRange(item) }}>
                         {item}
                       </button>
                     ))}
                   </div>
                 </header>
                 <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={series}>
-                      <XAxis dataKey="hour" tick={{ fill: '#8aa0ae', fontSize: 12 }} axisLine={false} tickLine={false} />
-                      <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(tick) => `${tick}%`} tick={{ fill: '#8aa0ae', fontSize: 12 }} axisLine={false} tickLine={false} width={42} />
-                      <Tooltip formatter={(point) => [`${point}%`, 'Humedad']} />
-                      <Area type="monotone" dataKey="humedad" stroke="#1d6eab" fill="#1d6eab" fillOpacity={0.16} strokeWidth={3} />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  {chartData.length === 0 ? (
+                    <p className="grid h-full place-items-center text-sm font-semibold text-[#6b8494]">
+                      Aún no hay lecturas en este rango.
+                    </p>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData}>
+                        <XAxis dataKey="label" tick={{ fill: '#8aa0ae', fontSize: 12 }} axisLine={false} tickLine={false} />
+                        <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(tick) => `${tick}%`} tick={{ fill: '#8aa0ae', fontSize: 12 }} axisLine={false} tickLine={false} width={42} />
+                        <Tooltip formatter={(point) => [`${point}%`, 'Humedad']} />
+                        <Area type="monotone" dataKey="humedad" stroke="#1d6eab" fill="#1d6eab" fillOpacity={0.16} strokeWidth={3} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </article>
             )}
@@ -490,18 +542,27 @@ export default function Dashboard() {
               <article className={`${glass} p-4`}>
                 <h2 className="flex items-center gap-2 font-extrabold"><Droplets className="h-4 w-4 text-[#0a3d6b]" /> Control manual</h2>
                 <p className="mb-3 text-sm font-semibold text-[#0a3d6b]">Activa el riego cuando lo necesites</p>
-                <button className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] font-extrabold text-white disabled:opacity-70" type="button" onClick={startWater} disabled={!online || pump}>
-                  <Play className="h-4 w-4 fill-white" /> {pump ? 'Regando…' : 'Regar ahora'}
+                <button className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] font-extrabold text-white disabled:opacity-70" type="button" onClick={() => { void startWater() }} disabled={!online || pump || busy || !summary.device}>
+                  <Play className="h-4 w-4 fill-white" /> {pump ? 'Regando…' : busy ? 'Enviando…' : 'Regar ahora'}
                 </button>
                 <label className="mt-4 flex items-center justify-between text-sm">
                   Modo automático
-                  <button type="button" className={`h-7 w-12 rounded-full p-1 ${auto ? 'bg-[#2fbe59]' : 'bg-[#24527a]'}`} aria-pressed={auto} onClick={() => { setAuto((current) => !current); push(auto ? 'Modo automático en pausa.' : 'Modo automático activo.', !auto) }}>
+                  <button type="button" className={`h-7 w-12 rounded-full p-1 ${auto ? 'bg-[#2fbe59]' : 'bg-[#24527a]'}`} aria-pressed={auto} disabled={busy || !summary.zone} onClick={() => { void toggleAuto() }}>
                     <i className={`block h-5 w-5 rounded-full bg-white transition ${auto ? 'translate-x-5' : ''}`} />
                   </button>
                 </label>
-                <button className="mt-3 text-sm font-bold text-[#0a3d6b]" type="button" onClick={online ? loseConnection : restore}>
-                  {online ? 'Simular corte de red' : 'Restablecer conexión'}
-                </button>
+                {!summary.device && summary.zone && (
+                  <button className="mt-4 h-11 w-full rounded-xl border border-[#d7e3ee] bg-white font-bold text-[#0a3d6b] disabled:opacity-70" type="button" disabled={busy} onClick={() => { void createDevice() }}>
+                    Vincular ESP32
+                  </button>
+                )}
+                {newApiKey && (
+                  <p className="mt-3 break-all rounded-xl bg-[#f4f8fb] p-3 text-xs font-semibold text-[#0a3d6b]">
+                    Clave del dispositivo (guárdala): <code>{newApiKey}</code>
+                  </p>
+                )}
+                {actionError && <p className="mt-3 text-sm font-bold text-[#b42318]" role="alert">{actionError}</p>}
+                {actionNote && <p className="mt-3 text-sm font-bold text-[#0f6b32]" role="status">{actionNote}</p>}
               </article>
             )}
 
@@ -510,13 +571,13 @@ export default function Dashboard() {
                 <h2 className="mb-2 font-extrabold">Estado del sistema</h2>
                 <ul className="text-sm">
                   {[
-                    ['Conexión a internet', online ? 'Activa' : 'Caída'],
-                    ['ESP32', online ? 'En línea' : 'Sin enlace'],
-                    ['Fuente de alimentación', 'Normal'],
-                    ['Última actualización', clock()],
+                    ['Dispositivo', summary.device ? summary.device.name : 'No vinculado'],
+                    ['ESP32', !summary.device ? 'Sin dispositivo' : online ? 'En línea' : 'Sin enlace'],
+                    ['Última lectura', summary.latest?.recordedLabel || '—'],
+                    ['Última señal', summary.device?.lastSeenLabel || '—'],
                   ].map(([name, detail]) => (
-                    <li key={name} className="flex justify-between border-t border-[#e7eef3] py-2">
-                      {name} <b className="text-[#1f9d4a]">{detail}</b>
+                    <li key={name} className="flex justify-between gap-3 border-t border-[#e7eef3] py-2">
+                      {name} <b className="text-right text-[#1f9d4a]">{detail}</b>
                     </li>
                   ))}
                 </ul>
@@ -527,17 +588,20 @@ export default function Dashboard() {
               <article className={`${glass} p-4`}>
                 <header className="mb-2 flex items-center justify-between">
                   <h2 className="flex items-center gap-2 font-extrabold"><Bell className="h-4 w-4 text-[#0a3d6b]" /> Alertas recientes</h2>
-                  <button className="text-sm font-bold text-[#1d6eab]" type="button" onClick={toggleAlerts}>
-                    {alerts ? 'Ver todas' : 'En pausa'}
-                  </button>
                 </header>
                 <ul>
-                  {logs.map((entry) => (
-                    <li key={entry.id} className="flex justify-between gap-3 border-t border-[#e7eef3] py-2 text-sm">
-                      <span>{entry.text}</span>
-                      <time className="shrink-0 text-[#7e94a3]">{entry.time}</time>
+                  {(summary.alerts || []).length === 0 ? (
+                    <li className="border-t border-[#e7eef3] py-3 text-sm font-semibold text-[#6b8494]">
+                      No hay alertas todavía.
                     </li>
-                  ))}
+                  ) : (
+                    summary.alerts.map((entry) => (
+                      <li key={entry.id} className="flex justify-between gap-3 border-t border-[#e7eef3] py-2 text-sm">
+                        <span>{entry.message}</span>
+                        <time className="shrink-0 text-[#7e94a3]">{entry.createdLabel}</time>
+                      </li>
+                    ))
+                  )}
                 </ul>
               </article>
             )}
@@ -545,7 +609,9 @@ export default function Dashboard() {
             {section === 'inicio' && (
               <article className={`${glass} flex min-h-28 items-end p-5`}>
                 <p className="text-xl font-extrabold text-[#07182b]">
-                  Cuidemos el agua, con tecnología
+                  {summary.device
+                    ? 'Cuidemos el agua, con tecnología'
+                    : 'Vincula tu ESP32 en Configuración para ver humedad real'}
                 </p>
               </article>
             )}

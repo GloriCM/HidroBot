@@ -1,12 +1,20 @@
-export function moistureState(value) {
-  if (value < 35) {
+export function moistureState(value, threshold = 35, watch = 55) {
+  if (value == null || Number.isNaN(Number(value))) {
+    return {
+      key: 'unknown',
+      title: 'Sin lectura',
+      detail: 'Todavía no hay datos del sensor.',
+    }
+  }
+  const humidity = Number(value)
+  if (humidity < threshold) {
     return {
       key: 'dry',
       title: 'La tierra pide agua',
       detail: 'La humedad está por debajo del umbral. Conviene regar.',
     }
   }
-  if (value < 55) {
+  if (humidity < watch) {
     return {
       key: 'watch',
       title: 'Humedad en vigilancia',
