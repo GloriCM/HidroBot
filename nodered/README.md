@@ -2,7 +2,7 @@
 
 ## Importar
 
-1. Abre Node-RED → menú → Importar → selecciona `hidrobot-flow.json`.
+1. Abre Node-RED → menú → Importar → selecciona `flows-hidrobot.json`.
 2. Configura el broker MQTT `mosquitto` con `MQTT_USER` / `MQTT_PASS`.
 3. Define variables de entorno del contenedor Node-RED:
 

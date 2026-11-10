@@ -92,7 +92,7 @@ npm test
 ## Probar telemetría (ESP32 / Node-RED)
 
 1. Panel → Configuración → **Vincular ESP32** (`mqtt_id`, p. ej. `esp32-1`) y guarda la clave en `DEVICE_API_KEYS` de Node-RED.
-2. Importa el flujo [`nodered/hidrobot-flow.json`](nodered/hidrobot-flow.json).
+2. Importa el flujo [`nodered/flows-hidrobot.json`](nodered/flows-hidrobot.json).
 3. Prueba directa a la API:
 
 ```bash
