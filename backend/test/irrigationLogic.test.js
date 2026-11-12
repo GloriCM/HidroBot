@@ -28,6 +28,21 @@ test('tanque bajo bloquea aunque haya humedad baja', () => {
   assert.equal(r.regar, false)
 })
 
+test('sin lectura de tanque bloquea solo el riego automático', () => {
+  const auto = decideIrrigationLogic({ ...base, tankPct: null, humidityPct: 10 })
+  assert.equal(auto.code, 'tank_sensor_missing')
+  assert.equal(auto.regar, false)
+
+  const manual = decideIrrigationLogic({
+    ...base,
+    tankPct: null,
+    humidityPct: 10,
+    pending: { type: 'irrigate', seconds: 20 },
+  })
+  assert.equal(manual.code, 'manual')
+  assert.equal(manual.regar, true)
+})
+
 test('batería baja bloquea auto', () => {
   const r = decideIrrigationLogic({
     ...base,

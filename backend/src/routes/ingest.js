@@ -7,16 +7,22 @@ const deviceRef = {
   mqttId: z.string().min(1).max(64).optional(),
 }
 
+/** distancia_cm puede faltar o ser null (fallo del ultrasónico). */
+const optionalDistanceCm = z.preprocess((value) => {
+  if (value === null || value === undefined || value === '') return undefined
+  return value
+}, z.coerce.number().finite().optional())
+
 const telemetrySchema = z
   .object({
     ...deviceRef,
-    humedad_raw: z.coerce.number(),
-    distancia_cm: z.coerce.number(),
-    v_red: z.coerce.number(),
-    v_bat: z.coerce.number(),
+    humedad_raw: z.coerce.number().finite(),
+    distancia_cm: optionalDistanceCm,
+    v_red: z.coerce.number().finite(),
+    v_bat: z.coerce.number().finite(),
     fuente: z.enum(['red', 'bateria']),
     bomba: z.boolean().optional().default(false),
-    rssi: z.coerce.number().optional(),
+    rssi: z.coerce.number().finite().optional(),
     recordedAt: z.string().optional(),
   })
   .refine((value) => value.deviceId || value.mqttId, {
@@ -57,6 +63,32 @@ function requireDeviceKey(request) {
   return key.trim()
 }
 
+function readPathValue(body, path) {
+  let current = body
+  for (const key of path) {
+    if (current == null || typeof current !== 'object') return undefined
+    current = current[key]
+  }
+  return current
+}
+
+function throwValidationError(app, route, body, zodError) {
+  const fields = zodError.issues.map((issue) => {
+    const path = issue.path.length ? issue.path.join('.') : '(root)'
+    return {
+      field: path,
+      message: issue.message,
+      value: issue.path.length ? readPathValue(body, issue.path) : body,
+      code: issue.code,
+    }
+  })
+  app.log.warn(
+    { route, validation: fields },
+    `ingest: validación fallida (${fields.map((f) => `${f.field}=${JSON.stringify(f.value)}`).join(', ')})`,
+  )
+  throw new AppError(400, 'Cuerpo inválido', { code: 'VALIDATION' })
+}
+
 /**
  * @param {import('fastify').FastifyInstance} app
  */
@@ -65,7 +97,9 @@ export async function ingestRoutes(app) {
     requireIngestToken(request, app.config)
     const deviceKey = requireDeviceKey(request)
     const parsed = telemetrySchema.safeParse(request.body)
-    if (!parsed.success) throw new AppError(400, 'Cuerpo inválido')
+    if (!parsed.success) {
+      throwValidationError(app, 'POST /api/ingest/telemetry', request.body, parsed.error)
+    }
     return ingestService.ingestTelemetry(app, { ...parsed.data, deviceKey })
   })
 
@@ -73,7 +107,9 @@ export async function ingestRoutes(app) {
     requireIngestToken(request, app.config)
     const deviceKey = requireDeviceKey(request)
     const parsed = statusSchema.safeParse(request.body)
-    if (!parsed.success) throw new AppError(400, 'Cuerpo inválido')
+    if (!parsed.success) {
+      throwValidationError(app, 'POST /api/ingest/status', request.body, parsed.error)
+    }
     return ingestService.ingestStatus(app, { ...parsed.data, deviceKey })
   })
 
@@ -81,7 +117,9 @@ export async function ingestRoutes(app) {
     requireIngestToken(request, app.config)
     const deviceKey = requireDeviceKey(request)
     const parsed = eventSchema.safeParse(request.body)
-    if (!parsed.success) throw new AppError(400, 'Cuerpo inválido')
+    if (!parsed.success) {
+      throwValidationError(app, 'POST /api/ingest/event', request.body, parsed.error)
+    }
     return ingestService.ingestEvent(app, { ...parsed.data, deviceKey })
   })
 

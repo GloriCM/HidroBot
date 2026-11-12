@@ -43,7 +43,7 @@ export async function decideIrrigation(db, {
     return decision
   }
 
-  if (decision.code === 'tank_low') {
+  if (decision.code === 'tank_low' || decision.code === 'tank_sensor_missing') {
     return decision
   }
 

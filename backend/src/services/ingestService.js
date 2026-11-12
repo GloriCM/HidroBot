@@ -58,7 +58,11 @@ export async function ingestTelemetry(app, input) {
   const calibration = (await getCalibration(app.db, device.id)) || (await ensureCalibration(app.db, device.id))
 
   const humidityRaw = Number(input.humedad_raw)
-  const distanceCm = Number(input.distancia_cm)
+  const hasDistance =
+    input.distancia_cm !== null &&
+    input.distancia_cm !== undefined &&
+    Number.isFinite(Number(input.distancia_cm))
+  const distanceCm = hasDistance ? Number(input.distancia_cm) : null
   const vRed = Number(input.v_red)
   const vBat = Number(input.v_bat)
   const source = input.fuente === 'bateria' ? 'bateria' : 'red'
@@ -66,7 +70,9 @@ export async function ingestTelemetry(app, input) {
   const rssi = input.rssi == null ? null : Number(input.rssi)
 
   const humidityPct = roundPct(humidityPctFromRaw(humidityRaw, calibration))
-  const tankPct = roundPct(tankPctFromDistance(distanceCm, calibration))
+  const tankPct = hasDistance
+    ? roundPct(tankPctFromDistance(distanceCm, calibration))
+    : null
   const batteryPct = roundPct(batteryPctFromVoltage(vBat, calibration))
 
   let recordedAt = null
@@ -134,7 +140,16 @@ export async function ingestTelemetry(app, input) {
       message: `Batería baja (${batteryPct}%) en ${device.name}.`,
     })
   }
-  if (tankPct < tankMin) {
+  if (!hasDistance) {
+    await raiseAlert(app, {
+      userId: device.user_id,
+      zoneId: device.zone_id,
+      deviceId: device.id,
+      type: 'sensor_tanque_sin_lectura',
+      severity: 'warning',
+      message: `Sensor de tanque sin lectura en ${device.name}.`,
+    })
+  } else if (tankPct < tankMin) {
     await raiseAlert(app, {
       userId: device.user_id,
       zoneId: device.zone_id,
