@@ -306,7 +306,7 @@ async function pushConfig(app, device) {
         reason: result.reason,
         calibracion: payload.calibracion,
       },
-      'No se pudo publicar config retenida en MQTT vía Node-RED',
+      'No se pudo publicar config en MQTT vía Node-RED',
     )
   } else {
     app.log?.info(
@@ -316,16 +316,21 @@ async function pushConfig(app, device) {
         humedad_raw_seco: payload.calibracion.humedad_raw_seco,
         humedad_raw_mojado: payload.calibracion.humedad_raw_mojado,
       },
-      'Config publicada en hidrobot/<id>/config (retain)',
+      'Config publicada en hidrobot/<id>/config (sin retain)',
     )
   }
   return result
 }
 
-/** Republica la config retenida de todos los dispositivos (arranque de la API). */
+/** Publica config de un dispositivo (p. ej. tras hidrobot/<id>/config/solicitar). */
+export async function publishDeviceConfig(app, device) {
+  return pushConfig(app, device)
+}
+
+/** Republica la config de todos los dispositivos (arranque de la API / panel). */
 export async function pushAllDeviceConfigs(app) {
   const devices = await listAllDevices(app.db)
-  app.log?.info({ count: devices.length }, 'Republicando config MQTT de dispositivos')
+  app.log?.info({ count: devices.length }, 'Publicando config MQTT de dispositivos')
   const results = []
   for (const device of devices) {
     results.push({

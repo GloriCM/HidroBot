@@ -18,6 +18,7 @@ import { insertTelemetry } from '../repos/telemetry.js'
 import { getZoneSettings } from '../repos/zones.js'
 import { raiseAlert } from './alertService.js'
 import { decideIrrigation } from './irrigationDecision.js'
+import { publishDeviceConfig } from './panelService.js'
 
 async function resolveDevice(app, { deviceId, mqttId, deviceKey }) {
   let device = null
@@ -254,6 +255,21 @@ export async function getIngestConfig(app, { deviceId, mqttId, deviceKey }) {
   const settings = await getZoneSettings(app.db, device.zone_id)
   const calibration = (await getCalibration(app.db, device.id)) || (await ensureCalibration(app.db, device.id))
   return mapConfig(settings, calibration, device)
+}
+
+/**
+ * El ESP32 pide config tras conectar (MQTT config/solicitar → Node-RED → aquí).
+ * La API responde publicando hidrobot/<id>/config sin retain.
+ */
+export async function requestConfigPush(app, { deviceId, mqttId, deviceKey }) {
+  const device = await resolveDevice(app, { deviceId, mqttId, deviceKey })
+  const push = await publishDeviceConfig(app, device)
+  return {
+    ok: Boolean(push?.ok),
+    mqttId: device.mqtt_id,
+    pushed: Boolean(push?.ok),
+    reason: push?.reason || null,
+  }
 }
 
 /** @deprecated usar ingestTelemetry */

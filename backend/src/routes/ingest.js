@@ -134,6 +134,25 @@ export async function ingestRoutes(app) {
     return ingestService.getIngestConfig(app, { mqttId: deviceId, deviceKey })
   })
 
+  /** ESP32 → Node-RED (config/solicitar) → API: publica config MQTT sin retain. */
+  app.post('/api/ingest/config/request', async (request) => {
+    requireIngestToken(request, app.config)
+    const deviceKey = requireDeviceKey(request)
+    const parsed = z
+      .object({
+        deviceId: z.string().uuid().optional(),
+        mqttId: z.string().min(1).max(64).optional(),
+      })
+      .refine((value) => value.deviceId || value.mqttId, {
+        message: 'deviceId o mqttId requerido',
+      })
+      .safeParse(request.body ?? {})
+    if (!parsed.success) {
+      throwValidationError(app, 'POST /api/ingest/config/request', request.body, parsed.error)
+    }
+    return ingestService.requestConfigPush(app, { ...parsed.data, deviceKey })
+  })
+
   app.post('/api/ingest/readings', async () => {
     throw new AppError(410, 'Deprecated: usa POST /api/ingest/telemetry', {
       code: 'DEPRECATED',

@@ -179,6 +179,111 @@
     "wires": []
   },
   {
+    "id": "in_config_solicitar",
+    "type": "mqtt in",
+    "z": "hidrobot_tab",
+    "name": "config/solicitar",
+    "topic": "hidrobot/+/config/solicitar",
+    "qos": "0",
+    "datatype": "utf8",
+    "broker": "mqtt_broker",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 150,
+    "y": 300,
+    "wires": [["fn_config_solicitar"]]
+  },
+  {
+    "id": "fn_config_solicitar",
+    "type": "function",
+    "z": "hidrobot_tab",
+    "name": "solicitar → API",
+    "func": "const parts = String(msg.topic || '').split('/');\nconst mqttId = parts[1];\nif (!mqttId) return null;\nconst keys = JSON.parse(env.get('DEVICE_API_KEYS') || '{}');\nconst deviceKey = keys[mqttId];\nif (!deviceKey) {\n  node.warn('Sin DEVICE_API_KEYS para ' + mqttId);\n  return null;\n}\nmsg.headers = {\n  'Content-Type': 'application/json',\n  'X-Ingest-Token': env.get('INGEST_TOKEN'),\n  'X-Device-Key': deviceKey\n};\nmsg.url = (env.get('API_URL') || 'http://api:3000') + '/api/ingest/config/request';\nmsg.payload = { mqttId };\nmsg.mqttId = mqttId;\nnode.log('ESP solicita config: ' + mqttId);\nreturn msg;",
+    "outputs": 1,
+    "x": 380,
+    "y": 300,
+    "wires": [["http_config_request"]]
+  },
+  {
+    "id": "http_config_request",
+    "type": "http request",
+    "z": "hidrobot_tab",
+    "name": "POST config/request",
+    "method": "POST",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 610,
+    "y": 300,
+    "wires": [["dbg_config_req"]]
+  },
+  {
+    "id": "dbg_config_req",
+    "type": "debug",
+    "z": "hidrobot_tab",
+    "name": "log solicitar",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload",
+    "x": 820,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "inject_clear_retain",
+    "type": "inject",
+    "z": "hidrobot_tab",
+    "name": "borrar retain config (arranque)",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "3",
+    "topic": "",
+    "x": 190,
+    "y": 560,
+    "wires": [["fn_clear_retain"]]
+  },
+  {
+    "id": "fn_clear_retain",
+    "type": "function",
+    "z": "hidrobot_tab",
+    "name": "clear retain por DEVICE_API_KEYS",
+    "func": "const keys = JSON.parse(env.get('DEVICE_API_KEYS') || '{}');\nconst ids = Object.keys(keys);\nif (!ids.length) {\n  node.warn('Sin DEVICE_API_KEYS: no se borra retain');\n  return null;\n}\nnode.log('Borrando retain de config para: ' + ids.join(', '));\nreturn ids.map((mqttId) => ({\n  topic: 'hidrobot/' + mqttId + '/config',\n  payload: '',\n  qos: 1,\n  retain: true\n}));",
+    "outputs": 1,
+    "x": 480,
+    "y": 560,
+    "wires": [["out_clear_retain"]]
+  },
+  {
+    "id": "out_clear_retain",
+    "type": "mqtt out",
+    "z": "hidrobot_tab",
+    "name": "clear retain (payload vacío)",
+    "topic": "",
+    "qos": "1",
+    "retain": "true",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "mqtt_broker",
+    "x": 780,
+    "y": 560,
+    "wires": []
+  },
+  {
     "id": "http_in_publish",
     "type": "http in",
     "z": "hidrobot_tab",
@@ -188,7 +293,7 @@
     "upload": false,
     "swaggerDoc": "",
     "x": 150,
-    "y": 360,
+    "y": 400,
     "wires": [["fn_auth_publish"]]
   },
   {
@@ -196,10 +301,10 @@
     "type": "function",
     "z": "hidrobot_tab",
     "name": "check token + route",
-    "func": "const token = (msg.req && msg.req.headers && (msg.req.headers['x-nodered-token'] || msg.req.headers['X-NodeRed-Token'])) || '';\nif (!token || token !== env.get('NODERED_TOKEN')) {\n  node.warn('hidrobot/publish: token inválido');\n  msg.statusCode = 401;\n  msg.payload = { error: 'unauthorized' };\n  return [null, null, msg];\n}\nconst body = msg.payload || {};\nconst mqttId = body.mqttId;\nconst kind = body.kind;\nif (!mqttId || !kind) {\n  msg.statusCode = 400;\n  msg.payload = { error: 'mqttId y kind requeridos' };\n  return [null, null, msg];\n}\nif (kind === 'comando') {\n  msg.topic = 'hidrobot/' + mqttId + '/comando';\n  msg.payload = body.payload || {};\n  msg.qos = 1;\n  msg.retain = false;\n  msg._reply = { ok: true, kind: 'comando', topic: msg.topic };\n  node.log('MQTT comando → ' + msg.topic);\n  return [msg, null, null];\n}\nif (kind === 'config') {\n  msg.topic = 'hidrobot/' + mqttId + '/config';\n  msg.payload = body.payload || {};\n  msg.qos = 1;\n  msg.retain = true;\n  msg._reply = { ok: true, kind: 'config', topic: msg.topic, retain: true };\n  node.log('MQTT config retain → ' + msg.topic + ' ' + JSON.stringify(msg.payload));\n  return [null, msg, null];\n}\nmsg.statusCode = 400;\nmsg.payload = { error: 'kind inválido' };\nreturn [null, null, msg];",
+    "func": "const token = (msg.req && msg.req.headers && (msg.req.headers['x-nodered-token'] || msg.req.headers['X-NodeRed-Token'])) || '';\nif (!token || token !== env.get('NODERED_TOKEN')) {\n  node.warn('hidrobot/publish: token inválido');\n  msg.statusCode = 401;\n  msg.payload = { error: 'unauthorized' };\n  return [null, null, msg];\n}\nconst body = msg.payload || {};\nconst mqttId = body.mqttId;\nconst kind = body.kind;\nif (!mqttId || !kind) {\n  msg.statusCode = 400;\n  msg.payload = { error: 'mqttId y kind requeridos' };\n  return [null, null, msg];\n}\nif (kind === 'comando') {\n  msg.topic = 'hidrobot/' + mqttId + '/comando';\n  msg.payload = body.payload || {};\n  msg.qos = 1;\n  msg.retain = false;\n  msg._reply = { ok: true, kind: 'comando', topic: msg.topic };\n  node.log('MQTT comando → ' + msg.topic);\n  return [msg, null, null];\n}\nif (kind === 'config') {\n  msg.topic = 'hidrobot/' + mqttId + '/config';\n  msg.payload = body.payload || {};\n  msg.qos = 1;\n  msg.retain = false;\n  msg._reply = { ok: true, kind: 'config', topic: msg.topic, retain: false };\n  node.log('MQTT config → ' + msg.topic + ' ' + JSON.stringify(msg.payload));\n  return [null, msg, null];\n}\nmsg.statusCode = 400;\nmsg.payload = { error: 'kind inválido' };\nreturn [null, null, msg];",
     "outputs": 3,
     "x": 390,
-    "y": 360,
+    "y": 400,
     "wires": [["out_publish_comando", "fn_ok_reply"], ["out_publish_config", "dbg_config", "fn_ok_reply"], ["http_err"]]
   },
   {
@@ -217,25 +322,25 @@
     "expiry": "",
     "broker": "mqtt_broker",
     "x": 700,
-    "y": 300,
+    "y": 360,
     "wires": []
   },
   {
     "id": "out_publish_config",
     "type": "mqtt out",
     "z": "hidrobot_tab",
-    "name": "MQTT config retain=true",
+    "name": "MQTT config (no retain)",
     "topic": "",
     "qos": "1",
-    "retain": "true",
+    "retain": "false",
     "respTopic": "",
     "contentType": "",
     "userProps": "",
     "correl": "",
     "expiry": "",
     "broker": "mqtt_broker",
-    "x": 710,
-    "y": 360,
+    "x": 700,
+    "y": 420,
     "wires": []
   },
   {
@@ -251,7 +356,7 @@
     "statusVal": "topic",
     "statusType": "msg",
     "x": 690,
-    "y": 420,
+    "y": 480,
     "wires": []
   },
   {
@@ -262,7 +367,7 @@
     "func": "msg.statusCode = 200;\nmsg.payload = msg._reply || { ok: true };\nreturn msg;",
     "outputs": 1,
     "x": 620,
-    "y": 480,
+    "y": 520,
     "wires": [["http_ok"]]
   },
   {
@@ -273,7 +378,7 @@
     "statusCode": "",
     "headers": {},
     "x": 800,
-    "y": 480,
+    "y": 520,
     "wires": []
   },
   {
@@ -284,7 +389,7 @@
     "statusCode": "",
     "headers": {},
     "x": 620,
-    "y": 540,
+    "y": 580,
     "wires": []
   }
 ]

@@ -66,12 +66,14 @@ const int SUELO_RAW_MOJADO_DEF = 1200;
 
 // ===================== OBJETOS Y ESTADO =====================
 WebSocketsClient wsClient;
-MQTTPubSubClient mqtt;
+// Buffer 1024: la config con calibración no cabe en los 128 B por defecto.
+arduino::mqtt::PubSubClient<1024> mqtt;
 Adafruit_SSD1306 pantalla(128, 64, &Wire, -1);
 Preferences prefs;
 bool hayPantalla = false;
 
-String TOPIC_TELEMETRIA, TOPIC_ESTADO, TOPIC_EVENTO, TOPIC_COMANDO, TOPIC_CONFIG;
+String TOPIC_TELEMETRIA, TOPIC_ESTADO, TOPIC_EVENTO, TOPIC_COMANDO, TOPIC_CONFIG,
+       TOPIC_CONFIG_SOLICITAR;
 
 bool bombaEncendida = false;
 unsigned long bombaInicioMs = 0;
@@ -395,16 +397,21 @@ void registrarFalloMqtt(const String& motivo) {
 String clasificarFalloMqtt(bool wsListo) {
   int rssi = WiFi.RSSI();
   if (WiFi.status() != WL_CONNECTED) return "Sin WiFi";
-  if (!wsListo || rssi <= RSSI_DEBIL_DBM) {
-    if (rssi <= RSSI_DEBIL_DBM) return "WiFi debil (RSSI)";  // OLED sin tilde
-  }
   lwmqtt_err_t err = mqtt.getLastError();
+  // Buffer corto / paquete mal formado (p. ej. retained demasiado grande).
+  if (err == LWMQTT_BUFFER_TOO_SHORT ||
+      err == LWMQTT_REMAINING_LENGTH_MISMATCH ||
+      err == LWMQTT_MISSING_OR_WRONG_PACKET) {
+    return "Error de protocolo MQTT";
+  }
   if (err == LWMQTT_CONNECTION_DENIED) {
     return "Usuario/clave MQTT incorrectos";
   }
+  if (!wsListo || rssi <= RSSI_DEBIL_DBM) {
+    if (rssi <= RSSI_DEBIL_DBM) return "WiFi debil (RSSI)";
+  }
   if (!wsListo || err == LWMQTT_NETWORK_TIMEOUT || err == LWMQTT_NETWORK_FAILED_READ ||
-      err == LWMQTT_NETWORK_FAILED_WRITE || err == LWMQTT_MISSING_OR_WRONG_PACKET ||
-      err == LWMQTT_NETWORK_FAILED_CONNECT) {
+      err == LWMQTT_NETWORK_FAILED_WRITE || err == LWMQTT_NETWORK_FAILED_CONNECT) {
     return "Servidor tarda en responder";
   }
   if (rssi <= RSSI_DEBIL_DBM) return "WiFi debil (RSSI)";
@@ -412,9 +419,14 @@ String clasificarFalloMqtt(bool wsListo) {
 }
 
 void mqttListo() {
+  // Suscribirse primero; la config ya no va retenida (evita PUBLISH antes del SUBACK).
   mqtt.subscribe(TOPIC_COMANDO, alRecibirComando);
   mqtt.subscribe(TOPIC_CONFIG, alRecibirConfig);
   mqtt.publish(TOPIC_ESTADO, "online", true, 1);
+  // Pide a la API (vía Node-RED) que publique la calibración actual sin retain.
+  bool pedida = mqtt.publish(TOPIC_CONFIG_SOLICITAR, "{}", false, 0);
+  Serial.printf("Config solicitada en %s (%s)\n",
+                TOPIC_CONFIG_SOLICITAR.c_str(), pedida ? "ok" : "fallo");
   motivoFalloMqtt = "";
   wifiOkDesdeMs = 0;
   connFase = CONN_OK;
@@ -643,6 +655,7 @@ void setup() {
   TOPIC_EVENTO = base + "evento";
   TOPIC_COMANDO = base + "comando";
   TOPIC_CONFIG = base + "config";
+  TOPIC_CONFIG_SOLICITAR = base + "config/solicitar";
 
   mqtt.begin(wsClient);
   mqtt.setTimeout(MQTT_CMD_TIMEOUT_MS);

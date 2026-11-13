@@ -27,8 +27,13 @@
 
 La API usa `NODERED_COMMAND_URL=http://nodered:1880/hidrobot/publish`.
 
-## Config retenida
+## Config (sin retain)
 
-`kind: "config"` se publica en `hidrobot/<mqttId>/config` con **QoS 1** y **retain = true**
-(nodo MQTT dedicado, no depende de `msg.retain`). Al arrancar, la API republica la
-config de todos los dispositivos. Tras guardar calibración/ajustes en el panel también.
+El ESP32, al conectar, publica `hidrobot/<mqttId>/config/solicitar`. Node-RED llama a
+`POST /api/ingest/config/request` y la API responde publicando `hidrobot/<mqttId>/config`
+con **QoS 1** y **retain = false**.
+
+También se publica config (sin retain) al guardar calibración/ajustes y al arrancar la API.
+
+Al desplegar el flujo, un inject borra el mensaje retenido antiguo publicando payload vacío
+con retain=true en `hidrobot/<id>/config` para cada clave de `DEVICE_API_KEYS`.
