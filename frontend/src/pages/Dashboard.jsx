@@ -17,7 +17,8 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, ResponsiveContainer } from 'recharts'
+import HistoryChart from '../components/HistoryChart'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
 import { moistureState } from '../lib/moisture'
@@ -58,6 +59,12 @@ const emptySummary = {
 const glass =
   'rounded-3xl border border-white/80 bg-[linear-gradient(165deg,rgba(255,255,255,0.72),rgba(255,255,255,0.38))] shadow-[0_16px_36px_rgba(16,40,30,0.12),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-2xl'
 
+function clientRangeMeta(rangeKey) {
+  const hours = rangeKey === '1h' ? 1 : rangeKey === '6h' ? 6 : rangeKey === '12h' ? 12 : 24
+  const toT = Date.now()
+  return { fromT: toT - hours * 60 * 60 * 1000, toT, key: rangeKey }
+}
+
 function MiniChart({ data, dataKey, color }) {
   if (!data?.length) return <div className="mt-2 h-10" />
   return (
@@ -75,6 +82,8 @@ export default function Dashboard() {
   const { user, ready, logout, updateProfile, resetPassword } = useAuth()
   const [summary, setSummary] = useState(emptySummary)
   const [series, setSeries] = useState([])
+  const [seriesMeta, setSeriesMeta] = useState(null)
+  const [chartIrrigations, setChartIrrigations] = useState([])
   const [range, setRange] = useState('24h')
   const [section, setSection] = useState('inicio')
   const [loading, setLoading] = useState(true)
@@ -132,11 +141,16 @@ export default function Dashboard() {
   const loadSeries = useCallback(async (deviceId, nextRange) => {
     if (!deviceId) {
       setSeries([])
+      setSeriesMeta(null)
+      setChartIrrigations([])
       return
     }
     try {
       const data = await api.telemetry(deviceId, nextRange)
+      // Actualización in-place: no vaciar antes (evita parpadeo).
       setSeries(data.series || [])
+      setSeriesMeta(data.range || null)
+      setChartIrrigations(data.irrigations || [])
     } catch {
       /* resumen cubre el error */
     }
@@ -150,11 +164,12 @@ export default function Dashboard() {
       if (cancelled || !data?.device?.id) return
       await loadSeries(data.device.id, range)
     })()
+    // El ESP32 envía cada 10 s: refrescar en el mismo ritmo sin recargar la página.
     const id = setInterval(() => {
       void loadSummary().then((data) => {
         if (data?.device?.id) void loadSeries(data.device.id, range)
       })
-    }, 8000)
+    }, 10_000)
     return () => {
       cancelled = true
       clearInterval(id)
@@ -592,27 +607,26 @@ export default function Dashboard() {
                       <h2 className="flex items-center gap-2 font-extrabold"><ChartColumn className="h-4 w-4" /> Historial</h2>
                       <div className="flex gap-1 text-xs font-bold text-[#6b8494]">
                         {['1h', '6h', '12h', '24h'].map((item) => (
-                          <button key={item} type="button" className={`rounded-full px-2 py-1 ${range === item ? 'bg-[#16324a] text-white' : ''}`} onClick={() => { setRange(item); if (summary.device?.id) void loadSeries(summary.device.id, item) }}>
+                          <button
+                            key={item}
+                            type="button"
+                            className={`rounded-full px-2 py-1 ${range === item ? 'bg-[#16324a] text-white' : ''}`}
+                            onClick={() => {
+                              setRange(item)
+                              setSeriesMeta(clientRangeMeta(item))
+                              if (summary.device?.id) void loadSeries(summary.device.id, item)
+                            }}
+                          >
                             {item}
                           </button>
                         ))}
                       </div>
                     </header>
-                    <div className="h-64">
-                      {chartData.length === 0 ? (
-                        <p className="grid h-full place-items-center text-sm font-semibold text-[#6b8494]">Sin telemetría en este rango.</p>
-                      ) : (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={chartData}>
-                            <XAxis dataKey="label" tick={{ fill: '#8aa0ae', fontSize: 12 }} axisLine={false} tickLine={false} />
-                            <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(t) => `${t}%`} tick={{ fill: '#8aa0ae', fontSize: 12 }} axisLine={false} tickLine={false} width={42} />
-                            <Tooltip />
-                            <Area type="monotone" dataKey="humidity" name="Humedad" stroke="#1d6eab" fill="#1d6eab" fillOpacity={0.14} strokeWidth={3} />
-                            <Area type="monotone" dataKey="tank" name="Tanque" stroke="#0f766e" fill="#0f766e" fillOpacity={0.08} strokeWidth={2} />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      )}
-                    </div>
+                    <HistoryChart
+                      data={chartData}
+                      rangeMeta={seriesMeta}
+                      irrigations={chartIrrigations}
+                    />
                   </article>
                 )}
 

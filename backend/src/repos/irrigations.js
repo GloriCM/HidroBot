@@ -68,3 +68,21 @@ export async function listIrrigations(db, zoneId, limit = 50) {
   )
   return result.rows
 }
+
+/**
+ * Riegos que intersectan un rango de tiempo (para marcas en el gráfico).
+ * @param {import('pg').Pool | import('pg').PoolClient} db
+ */
+export async function listIrrigationsInRange(db, { zoneId, from, to = new Date(), limit = 100 }) {
+  const result = await db.query(
+    `SELECT id, zone_id, device_id, started_at, ended_at, reason, seconds_requested, seconds_actual
+     FROM irrigation_events
+     WHERE zone_id = $1
+       AND started_at <= $3
+       AND COALESCE(ended_at, now()) >= $2
+     ORDER BY started_at ASC
+     LIMIT $4`,
+    [zoneId, from, to, limit],
+  )
+  return result.rows
+}

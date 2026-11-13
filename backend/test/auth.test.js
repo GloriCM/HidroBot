@@ -46,7 +46,8 @@ run('auth API', () => {
     assert.ok(cookie)
     assert.equal(cookie.httpOnly, true)
     assert.equal(cookie.sameSite, 'Lax')
-    assert.equal(cookie.secure, false)
+    // @fastify/cookie puede omitir el atributo cuando secure=false
+    assert.ok(!cookie.secure)
 
     const me = await app.inject({
       method: 'GET',

@@ -10,10 +10,15 @@ import {
 } from '../repos/commands.js'
 import { insertDevice, listDevicesByZone, listStaleDevices, updateDeviceRuntime } from '../repos/devices.js'
 import { listGardensByUser } from '../repos/gardens.js'
-import { listIrrigations, openIrrigation } from '../repos/irrigations.js'
+import { listIrrigations, listIrrigationsInRange, openIrrigation } from '../repos/irrigations.js'
 import { getDeviceForUser, getZoneForUser } from '../repos/ownership.js'
 import { deleteOldReadings } from '../repos/readings.js'
-import { deleteOldTelemetry, latestTelemetry, listTelemetry } from '../repos/telemetry.js'
+import {
+  deleteOldTelemetry,
+  latestTelemetry,
+  listTelemetry,
+  listTelemetryAggregated,
+} from '../repos/telemetry.js'
 import {
   getPrimaryZoneForUser,
   getZoneSettings,
@@ -27,14 +32,87 @@ function num(value) {
   return value == null ? null : Number(value)
 }
 
-function rangeToFrom(range) {
-  const now = Date.now()
+/** Intervalo de envío del ESP32 (ms). Hueco = 3× este valor en crudo. */
+export const TELEMETRY_SEND_INTERVAL_MS = 10_000
+
+/**
+ * Config de agregación por rango del gráfico.
+ * 1h crudo · 6h /1 min · 12h /2 min · 24h /5 min
+ */
+export function rangeAggregation(range) {
   const hours = range === '1h' ? 1 : range === '6h' ? 6 : range === '12h' ? 12 : 24
-  return new Date(now - hours * 60 * 60 * 1000)
+  if (range === '1h') {
+    return {
+      hours,
+      binInterval: null,
+      intervalSeconds: TELEMETRY_SEND_INTERVAL_MS / 1000,
+      gapMs: TELEMETRY_SEND_INTERVAL_MS * 3,
+    }
+  }
+  if (range === '6h') {
+    return { hours, binInterval: '1 minute', intervalSeconds: 60, gapMs: 60_000 * 3 }
+  }
+  if (range === '12h') {
+    return { hours, binInterval: '2 minutes', intervalSeconds: 120, gapMs: 120_000 * 3 }
+  }
+  return { hours, binInterval: '5 minutes', intervalSeconds: 300, gapMs: 300_000 * 3 }
+}
+
+function rangeWindow(range, now = new Date()) {
+  const { hours } = rangeAggregation(range)
+  const to = new Date(now)
+  const from = new Date(to.getTime() - hours * 60 * 60 * 1000)
+  return { from, to }
 }
 
 function formatBogota(iso) {
   return new Date(iso).toLocaleString('es-CO', { timeZone: 'America/Bogota' })
+}
+
+function formatBogotaTime(iso, withSeconds = false) {
+  return new Date(iso).toLocaleTimeString('es-CO', {
+    timeZone: 'America/Bogota',
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(withSeconds ? { second: '2-digit' } : {}),
+  })
+}
+
+/**
+ * Inserta puntos nulos para cortar la línea cuando hay huecos reales.
+ * @param {Array<Record<string, unknown>>} points
+ * @param {number} gapMs
+ */
+export function insertGapBreaks(points, gapMs) {
+  if (!points.length) return points
+  const out = []
+  for (let i = 0; i < points.length; i += 1) {
+    const point = points[i]
+    if (i > 0) {
+      const prev = points[i - 1]
+      const dt = Number(point.t) - Number(prev.t)
+      if (dt > gapMs) {
+        out.push({
+          t: Number(prev.t) + 1,
+          at: null,
+          label: null,
+          humidity: null,
+          humidityMin: null,
+          humidityMax: null,
+          tank: null,
+          battery: null,
+          vRed: null,
+          vBat: null,
+          source: null,
+          pump: null,
+          rssi: null,
+          gap: true,
+        })
+      }
+    }
+    out.push(point)
+  }
+  return out
 }
 
 function isDeviceOnline(device, offlineMinutes) {
@@ -80,21 +158,71 @@ function mapCalibration(row) {
 }
 
 function mapTelemetryPoint(row) {
+  const at = row.recorded_at
+  const t = new Date(at).getTime()
   return {
-    at: row.recorded_at,
-    label: new Date(row.recorded_at).toLocaleTimeString('es-CO', {
-      timeZone: 'America/Bogota',
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
+    t,
+    at,
+    label: formatBogotaTime(at, false),
+    labelFull: formatBogotaTime(at, true),
     humidity: num(row.humidity_pct),
+    humidityMin: num(row.humidity_min ?? row.humidity_pct),
+    humidityMax: num(row.humidity_max ?? row.humidity_pct),
     tank: num(row.tank_pct),
     battery: num(row.battery_pct),
     vRed: num(row.v_red),
     vBat: num(row.v_bat),
     source: row.source,
-    pump: row.pump,
-    rssi: row.rssi,
+    pump: row.pump == null ? null : Boolean(row.pump),
+    rssi: row.rssi == null ? null : Number(row.rssi),
+    samples: row.samples == null ? 1 : Number(row.samples),
+  }
+}
+
+function mapIrrigationMarker(row) {
+  return {
+    id: row.id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    startedT: new Date(row.started_at).getTime(),
+    endedT: row.ended_at ? new Date(row.ended_at).getTime() : null,
+    reason: row.reason,
+    secondsRequested: row.seconds_requested,
+    secondsActual: row.seconds_actual,
+  }
+}
+
+async function buildTelemetrySeries(app, { deviceId, zoneId, range, now = new Date() }) {
+  const agg = rangeAggregation(range)
+  const { from, to } = rangeWindow(range, now)
+  const rows = agg.binInterval
+    ? await listTelemetryAggregated(app.db, {
+        deviceId,
+        from,
+        to,
+        binInterval: agg.binInterval,
+      })
+    : await listTelemetry(app.db, { deviceId, from, to, limit: 2000 })
+
+  const series = insertGapBreaks(rows.map(mapTelemetryPoint), agg.gapMs)
+  let irrigations = []
+  if (zoneId) {
+    irrigations = (await listIrrigationsInRange(app.db, { zoneId, from, to })).map(
+      mapIrrigationMarker,
+    )
+  }
+  return {
+    series,
+    irrigations,
+    range: {
+      key: range,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      fromT: from.getTime(),
+      toT: to.getTime(),
+      intervalSeconds: agg.intervalSeconds,
+      aggregated: Boolean(agg.binInterval),
+    },
   }
 }
 
@@ -176,11 +304,12 @@ export async function getPanelSummary(app, userId) {
       onBattery = device.last_source === 'bateria'
     }
 
-    const rows = await listTelemetry(app.db, {
+    const teleSeries = await buildTelemetrySeries(app, {
       deviceId: device.id,
-      from: rangeToFrom('24h'),
+      zoneId: zone.id,
+      range: '24h',
     })
-    series = rows.map(mapTelemetryPoint)
+    series = teleSeries.series
 
     const open = await openIrrigation(app.db, zone.id)
     const lastAcked = await latestAckedIrrigation(app.db, device.id)
@@ -238,11 +367,11 @@ export async function getPanelSummary(app, userId) {
 export async function getTelemetrySeries(app, userId, deviceId, range = '24h') {
   const device = await getDeviceForUser(app.db, deviceId, userId)
   if (!device) throw new AppError(404, 'Dispositivo no encontrado')
-  const rows = await listTelemetry(app.db, {
-    deviceId,
-    from: rangeToFrom(range),
+  return buildTelemetrySeries(app, {
+    deviceId: device.id,
+    zoneId: device.zone_id,
+    range,
   })
-  return rows.map(mapTelemetryPoint)
 }
 
 /** @deprecated alias */

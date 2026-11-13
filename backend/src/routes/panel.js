@@ -71,24 +71,25 @@ export async function panelRoutes(app) {
     if (!['1h', '6h', '12h', '24h'].includes(range)) {
       throw new AppError(400, 'range inválido')
     }
-    const series = await panelService.getTelemetrySeries(
+    return panelService.getTelemetrySeries(
       app,
       request.user.id,
       request.params.deviceId,
       range,
     )
-    return { series }
   })
 
   app.get('/api/devices/:deviceId/readings', async (request) => {
     const range = typeof request.query.range === 'string' ? request.query.range : '24h'
-    const series = await panelService.getTelemetrySeries(
+    if (!['1h', '6h', '12h', '24h'].includes(range)) {
+      throw new AppError(400, 'range inválido')
+    }
+    return panelService.getTelemetrySeries(
       app,
       request.user.id,
       request.params.deviceId,
       range,
     )
-    return { series }
   })
 
   app.get('/api/devices/:deviceId/calibration', async (request) => {

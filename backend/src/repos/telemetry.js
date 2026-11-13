@@ -55,6 +55,39 @@ export async function listTelemetry(db, { deviceId, from, to = new Date(), limit
 }
 
 /**
+ * Agrega telemetría con date_bin.
+ * @param {import('pg').Pool | import('pg').PoolClient} db
+ * @param {{ deviceId: string, from: Date, to?: Date, binInterval: string, limit?: number }} opts
+ */
+export async function listTelemetryAggregated(
+  db,
+  { deviceId, from, to = new Date(), binInterval, limit = 2000 },
+) {
+  const result = await db.query(
+    `SELECT
+       date_bin($4::interval, recorded_at, TIMESTAMPTZ '2000-01-01') AS recorded_at,
+       AVG(humidity_pct)::float8 AS humidity_pct,
+       MIN(humidity_pct)::float8 AS humidity_min,
+       MAX(humidity_pct)::float8 AS humidity_max,
+       AVG(tank_pct)::float8 AS tank_pct,
+       AVG(v_red)::float8 AS v_red,
+       AVG(v_bat)::float8 AS v_bat,
+       AVG(battery_pct)::float8 AS battery_pct,
+       BOOL_OR(pump) AS pump,
+       (ARRAY_AGG(source ORDER BY recorded_at DESC))[1] AS source,
+       AVG(rssi)::float8 AS rssi,
+       COUNT(*)::int AS samples
+     FROM device_telemetry
+     WHERE device_id = $1 AND recorded_at >= $2 AND recorded_at <= $3
+     GROUP BY 1
+     ORDER BY 1 ASC
+     LIMIT $5`,
+    [deviceId, from, to, binInterval, limit],
+  )
+  return result.rows
+}
+
+/**
  * @param {import('pg').Pool | import('pg').PoolClient} db
  */
 export async function deleteOldTelemetry(db, retentionDays) {

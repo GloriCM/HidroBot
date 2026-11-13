@@ -49,7 +49,7 @@ const int PIN_BOTON_CONFIG = 0; // boton BOOT: 5 s pulsado = reconfigurar Wi-Fi
 const bool RELE_ACTIVO_BAJO = true;          // la mayoria de modulos se activan con LOW
 const float FACTOR_DIVISOR = 122.0 / 22.0;   // (100k + 22k) / 22k
 const float UMBRAL_HAY_RED_V = 9.0;          // por encima de esto: hay red
-const unsigned long INTERVALO_TELEMETRIA_MS = 30000;  // envio al servidor
+const unsigned long INTERVALO_TELEMETRIA_MS = 10000;  // envio al servidor
 const unsigned long INTERVALO_LECTURA_MS = 10000;     // lectura local de sensores
 const unsigned long RIEGO_MAX_SEG = 120;     // tope de seguridad local
 const float TANQUE_VACIO_CM = 30.0;          // distancia con el tanque vacio (ajustar)
@@ -313,12 +313,50 @@ String nombreRedConfig() {
   return String(nombre);
 }
 
+// CSS + marca compactos (sin imágenes externas: el portal no tiene internet).
+static const char HIDROBOT_PORTAL_HEAD[] PROGMEM = R"CSS(
+<style>
+body{margin:0;min-height:100vh;background:linear-gradient(160deg,#3aa0e8 0%,#7ed0ff 36%,#b6ef8a 72%,#3dae55 100%);font-family:system-ui,-apple-system,sans-serif;color:#07182b}
+.wrap{margin:18px auto!important;padding:18px 16px;background:linear-gradient(165deg,rgba(255,255,255,.82),rgba(255,255,255,.55));border:1px solid rgba(255,255,255,.85);border-radius:22px;box-shadow:0 16px 36px rgba(16,40,30,.14);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+h1,h3{text-align:center;margin:.2rem 0}
+h1{font-size:1.35rem;font-weight:800}
+h3{font-size:.95rem;font-weight:600;color:#0a3d6b}
+input:not([type=checkbox]),select{border:1px solid #d7e3ee!important;background:#f7fafc!important;border-radius:12px!important;padding:10px 12px!important}
+button,input[type=submit]{background:linear-gradient(90deg,#1d4ed8,#22c55e)!important;border:0!important;border-radius:999px!important;font-weight:800!important;box-shadow:0 8px 18px rgba(16,40,30,.16)}
+.msg{border-radius:14px!important;background:rgba(255,255,255,.75)!important}
+.hb-brand{display:flex;align-items:center;justify-content:center;gap:8px;margin:0 0 10px;font-weight:800;font-size:1.05rem}
+.hb-brand svg{width:28px;height:28px}
+.hb-note{margin:0 0 12px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.8);font-size:.82rem;line-height:1.35;color:#0a3d6b;text-align:left}
+</style>
+)CSS";
+
+static const char HIDROBOT_PORTAL_MENU_HTML[] PROGMEM =
+"<div class='hb-brand'>"
+"<svg viewBox='0 0 64 64' aria-hidden='true'>"
+"<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
+"<stop offset='0%' stop-color='#1d6eab'/><stop offset='100%' stop-color='#22c55e'/>"
+"</linearGradient></defs>"
+"<path fill='url(#g)' d='M32 6C32 6 14 28 14 40a18 18 0 0 0 36 0C50 28 32 6 32 6z'/>"
+"</svg>"
+"<span>HidroBot · Configura tu Wi-Fi</span>"
+"</div>"
+"<div class='hb-note'>"
+"<b>Dispositivo:</b> esp32-1<br/>"
+"Solo redes <b>2,4 GHz</b> (el ESP32 no usa 5 GHz)."
+"</div>";
+
 // Si hay una red guardada, se conecta. Si no (o si se fuerza),
 // abre el portal durante 5 minutos para configurarla desde el celular.
 void configurarWifi(bool forzarPortal) {
   WiFiManager wm;
   wm.setTitle("HidroBot");
   wm.setConfigPortalTimeout(300);
+  wm.setCustomHeadElement(HIDROBOT_PORTAL_HEAD);
+  wm.setCustomMenuHTML(HIDROBOT_PORTAL_MENU_HTML);
+  // Solo lo necesario: Wi-Fi, información y salir (sin update/erase).
+  const char* menu[3] = {"wifi", "info", "exit"};
+  wm.setMenu(menu, 3);
+
   String red = nombreRedConfig();
   wm.setAPCallback([red](WiFiManager*) {
     String msg = "Configura el WiFi\nRed: " + red + "\nClave: " + AP_PASS +
