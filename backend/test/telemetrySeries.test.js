@@ -111,7 +111,7 @@ run('GET telemetría agregada por range', () => {
     assert.ok(body.series.some((p) => p.gap === true), 'debe cortar el hueco >30s')
   })
 
-  test('6h: agrega por minuto y expone min/max de humedad', async () => {
+  test('6h: agrega por minuto, min/max y termina en la lectura cruda', async () => {
     const response = await app.inject({
       method: 'GET',
       url: `/api/devices/${deviceId}/telemetry?range=6h`,
@@ -128,6 +128,12 @@ run('GET telemetría agregada por range', () => {
     assert.ok(real.length > 0)
     assert.ok(real.every((p) => p.humidityMin != null && p.humidityMax != null))
     assert.ok(real.every((p) => p.humidityMin <= p.humidity && p.humidity <= p.humidityMax))
+    const last = real[real.length - 1]
+    assert.equal(last.rawLatest, true)
+    assert.equal(last.aggregated, false)
+    const bins = real.filter((p) => p.aggregated)
+    assert.ok(bins.length > 0)
+    assert.ok(bins.every((p) => p.binEndT === p.t + body.range.intervalSeconds * 1000))
   })
 
   test('12h y 24h respetan el intervalo de bin configurado', async () => {

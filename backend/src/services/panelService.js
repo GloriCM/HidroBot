@@ -157,26 +157,59 @@ function mapCalibration(row) {
   }
 }
 
-function mapTelemetryPoint(row) {
+function round1(value) {
+  if (value == null || !Number.isFinite(Number(value))) return null
+  return Math.round(Number(value) * 10) / 10
+}
+
+function mapTelemetryPoint(row, { aggregated = false, intervalSeconds = null, rawLatest = false } = {}) {
   const at = row.recorded_at
   const t = new Date(at).getTime()
+  const isAgg = Boolean(aggregated) && !rawLatest
+  const binEndT = isAgg && intervalSeconds ? t + intervalSeconds * 1000 : null
   return {
     t,
     at,
+    binEndT,
     label: formatBogotaTime(at, false),
     labelFull: formatBogotaTime(at, true),
-    humidity: num(row.humidity_pct),
-    humidityMin: num(row.humidity_min ?? row.humidity_pct),
-    humidityMax: num(row.humidity_max ?? row.humidity_pct),
-    tank: num(row.tank_pct),
-    battery: num(row.battery_pct),
-    vRed: num(row.v_red),
-    vBat: num(row.v_bat),
+    humidity: round1(row.humidity_pct),
+    humidityMin: round1(row.humidity_min ?? row.humidity_pct),
+    humidityMax: round1(row.humidity_max ?? row.humidity_pct),
+    tank: round1(row.tank_pct),
+    battery: round1(row.battery_pct),
+    vRed: round1(row.v_red),
+    vBat: round1(row.v_bat),
     source: row.source,
     pump: row.pump == null ? null : Boolean(row.pump),
     rssi: row.rssi == null ? null : Number(row.rssi),
     samples: row.samples == null ? 1 : Number(row.samples),
+    aggregated: isAgg,
+    rawLatest: Boolean(rawLatest),
   }
+}
+
+/**
+ * Asegura que el extremo derecho coincida con la última lectura cruda (tarjeta del panel).
+ */
+async function withLatestRawPoint(app, deviceId, series, { aggregated, intervalSeconds }) {
+  const latest = await latestTelemetry(app.db, deviceId)
+  if (!latest) return series
+  const point = mapTelemetryPoint(latest, {
+    aggregated: false,
+    intervalSeconds: null,
+    rawLatest: true,
+  })
+  const filtered = series.filter((p) => p.gap || Number(p.t) < point.t)
+  const lastReal = [...filtered].reverse().find((p) => !p.gap)
+  if (lastReal && Number(lastReal.t) === point.t && lastReal.rawLatest) {
+    return filtered
+  }
+  filtered.push(point)
+  // Si el rango es agregado, marcar puntos previos como agregados ya viene de map.
+  void aggregated
+  void intervalSeconds
+  return filtered
 }
 
 function mapIrrigationMarker(row) {
@@ -195,7 +228,9 @@ function mapIrrigationMarker(row) {
 async function buildTelemetrySeries(app, { deviceId, zoneId, range, now = new Date() }) {
   const agg = rangeAggregation(range)
   const { from, to } = rangeWindow(range, now)
-  const rows = agg.binInterval
+  const aggregated = Boolean(agg.binInterval)
+  const mapOpts = { aggregated, intervalSeconds: agg.intervalSeconds }
+  const rows = aggregated
     ? await listTelemetryAggregated(app.db, {
         deviceId,
         from,
@@ -204,7 +239,12 @@ async function buildTelemetrySeries(app, { deviceId, zoneId, range, now = new Da
       })
     : await listTelemetry(app.db, { deviceId, from, to, limit: 2000 })
 
-  const series = insertGapBreaks(rows.map(mapTelemetryPoint), agg.gapMs)
+  let series = insertGapBreaks(
+    rows.map((row) => mapTelemetryPoint(row, mapOpts)),
+    agg.gapMs,
+  )
+  series = await withLatestRawPoint(app, deviceId, series, mapOpts)
+
   let irrigations = []
   if (zoneId) {
     irrigations = (await listIrrigationsInRange(app.db, { zoneId, from, to })).map(
@@ -221,7 +261,7 @@ async function buildTelemetrySeries(app, { deviceId, zoneId, range, now = new Da
       fromT: from.getTime(),
       toT: to.getTime(),
       intervalSeconds: agg.intervalSeconds,
-      aggregated: Boolean(agg.binInterval),
+      aggregated,
     },
   }
 }
@@ -431,6 +471,7 @@ export async function createDevice(app, userId, zoneId, { name, mqttId } = {}) {
   }
 
   await ensureCalibration(app.db, device.id)
+  await pushConfig(app, device)
 
   return {
     device: {

@@ -23,6 +23,7 @@
 #include <ArduinoJson.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Preferences.h>
 
 // ===================== 1. DATOS PRIVADOS =====================
 // MQTT_PASS y AP_PASS vienen de include/secrets.h (el Wi-Fi se configura por el portal)
@@ -52,14 +53,17 @@ const float UMBRAL_HAY_RED_V = 9.0;          // por encima de esto: hay red
 const unsigned long INTERVALO_TELEMETRIA_MS = 10000;  // envio al servidor
 const unsigned long INTERVALO_LECTURA_MS = 10000;     // lectura local de sensores
 const unsigned long RIEGO_MAX_SEG = 120;     // tope de seguridad local
-const float TANQUE_VACIO_CM = 30.0;          // distancia con el tanque vacio (ajustar)
-const int SUELO_RAW_SECO = 3500;             // solo para el % de la pantalla
-const int SUELO_RAW_MOJADO = 1500;
+// Defectos alineados con device_calibration de la API (hasta recibir /config).
+const float TANQUE_VACIO_CM_DEF = 40.0;
+const float TANQUE_LLENO_CM_DEF = 5.0;
+const int SUELO_RAW_SECO_DEF = 3000;
+const int SUELO_RAW_MOJADO_DEF = 1200;
 
 // ===================== OBJETOS Y ESTADO =====================
 WebSocketsClient wsClient;
 MQTTPubSubClient mqtt;
 Adafruit_SSD1306 pantalla(128, 64, &Wire, -1);
+Preferences prefs;
 bool hayPantalla = false;
 
 String TOPIC_TELEMETRIA, TOPIC_ESTADO, TOPIC_EVENTO, TOPIC_COMANDO, TOPIC_CONFIG;
@@ -80,6 +84,42 @@ float vRed = 0;
 float vBat = 0;
 String fuente = "red";
 String comandoPendiente = "";
+String configPendiente = "";
+
+// Calibracion (NVS). Misma formula que la API: interpolacion lineal 0–100.
+int sueloRawSeco = SUELO_RAW_SECO_DEF;
+int sueloRawMojado = SUELO_RAW_MOJADO_DEF;
+float distanciaLlenoCm = TANQUE_LLENO_CM_DEF;
+float distanciaVacioCm = TANQUE_VACIO_CM_DEF;
+
+void cargarCalibracionNvs() {
+  prefs.begin("hidrobot", true);
+  sueloRawSeco = prefs.getInt("suelo_seco", SUELO_RAW_SECO_DEF);
+  sueloRawMojado = prefs.getInt("suelo_mojado", SUELO_RAW_MOJADO_DEF);
+  distanciaLlenoCm = prefs.getFloat("dist_lleno", TANQUE_LLENO_CM_DEF);
+  distanciaVacioCm = prefs.getFloat("dist_vacio", TANQUE_VACIO_CM_DEF);
+  prefs.end();
+  Serial.printf("Calibracion NVS: seco=%d mojado=%d lleno=%.1f vacio=%.1f\n",
+                sueloRawSeco, sueloRawMojado, distanciaLlenoCm, distanciaVacioCm);
+}
+
+void guardarCalibracionNvs() {
+  prefs.begin("hidrobot", false);
+  prefs.putInt("suelo_seco", sueloRawSeco);
+  prefs.putInt("suelo_mojado", sueloRawMojado);
+  prefs.putFloat("dist_lleno", distanciaLlenoCm);
+  prefs.putFloat("dist_vacio", distanciaVacioCm);
+  prefs.end();
+}
+
+// Misma formula que humidityPctFromRaw en la API.
+float humedadPctDesdeRaw(int raw) {
+  if (sueloRawSeco == sueloRawMojado) return 0.0f;
+  float pct = 100.0f * (float)(sueloRawSeco - raw) / (float)(sueloRawSeco - sueloRawMojado);
+  if (pct < 0.0f) return 0.0f;
+  if (pct > 100.0f) return 100.0f;
+  return pct;
+}
 
 // ===================== PANTALLA =====================
 void mostrarMensaje(const char* texto) {
@@ -97,14 +137,13 @@ void mostrarMensaje(const char* texto) {
 
 void actualizarPantalla() {
   if (!hayPantalla) return;
-  int pct = map(constrain(sueloRaw, SUELO_RAW_MOJADO, SUELO_RAW_SECO),
-                SUELO_RAW_SECO, SUELO_RAW_MOJADO, 0, 100);
+  float pct = humedadPctDesdeRaw(sueloRaw);
   pantalla.clearDisplay();
   pantalla.setTextSize(1);
   pantalla.setTextColor(SSD1306_WHITE);
   pantalla.setCursor(0, 0);
   pantalla.println("HidroBot");
-  pantalla.printf("Suelo: %d%% (%d)\n", pct, sueloRaw);
+  pantalla.printf("Suelo: %.1f%% (%d)\n", pct, sueloRaw);
   if (distanciaCm >= 0) pantalla.printf("Tanque: %.1f cm\n", distanciaCm);
   else pantalla.println("Tanque: --");
   pantalla.printf("%s R:%.1fV B:%.1fV\n", fuente == "red" ? "RED" : "BAT", vRed, vBat);
@@ -217,7 +256,7 @@ void apagarBomba(const char* motivo) {
 }
 
 void encenderBomba(unsigned long segundos) {
-  if (distanciaCm < 0 || distanciaCm >= TANQUE_VACIO_CM) {
+  if (distanciaCm < 0 || distanciaCm >= distanciaVacioCm) {
     Serial.println("Riego bloqueado: tanque vacio o sin lectura del nivel");
     publicarEvento("bloqueo_tanque_vacio", 0);
     return;
@@ -238,8 +277,45 @@ void alRecibirComando(const String& payload, const size_t size) {
 }
 
 void alRecibirConfig(const String& payload, const size_t size) {
+  configPendiente = payload;
+}
+
+void procesarConfigPendiente() {
+  if (configPendiente.isEmpty()) return;
+  String p = configPendiente;
+  configPendiente = "";
   Serial.print("Config recibida: ");
-  Serial.println(payload);
+  Serial.println(p);
+
+  JsonDocument doc;
+  if (deserializeJson(doc, p)) {
+    Serial.println("Config con formato invalido");
+    return;
+  }
+
+  JsonVariant cal = doc["calibracion"];
+  if (cal.isNull() || !cal.is<JsonObject>()) {
+    Serial.println("Config sin calibracion; se mantienen valores NVS/defecto");
+    return;
+  }
+
+  if (!cal["humedad_raw_seco"].isNull()) {
+    sueloRawSeco = cal["humedad_raw_seco"].as<int>();
+  }
+  if (!cal["humedad_raw_mojado"].isNull()) {
+    sueloRawMojado = cal["humedad_raw_mojado"].as<int>();
+  }
+  if (!cal["distancia_lleno_cm"].isNull()) {
+    distanciaLlenoCm = cal["distancia_lleno_cm"].as<float>();
+  }
+  if (!cal["distancia_vacio_cm"].isNull()) {
+    distanciaVacioCm = cal["distancia_vacio_cm"].as<float>();
+  }
+
+  guardarCalibracionNvs();
+  Serial.printf("Calibracion guardada: seco=%d mojado=%d lleno=%.1f vacio=%.1f\n",
+                sueloRawSeco, sueloRawMojado, distanciaLlenoCm, distanciaVacioCm);
+  actualizarPantalla();
 }
 
 void procesarComandoPendiente() {
@@ -413,6 +489,8 @@ void setup() {
   hayPantalla = pantalla.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   if (!hayPantalla) Serial.println("Pantalla OLED no encontrada (prueba la direccion 0x3D)");
 
+  cargarCalibracionNvs();
+
   String base = String("hidrobot/") + DEVICE_ID + "/";
   TOPIC_TELEMETRIA = base + "telemetria";
   TOPIC_ESTADO = base + "estado";
@@ -444,6 +522,7 @@ void loop() {
 
   mqtt.update();
   procesarComandoPendiente();
+  procesarConfigPendiente();
 
   // Seguridad local de la bomba
   if (bombaEncendida) {
@@ -454,7 +533,7 @@ void loop() {
       ultimoChequeoTanqueMs = millis();
       float d = leerDistancia();
       if (d >= 0) distanciaCm = d;
-      if (distanciaCm >= TANQUE_VACIO_CM) {
+      if (distanciaCm >= distanciaVacioCm) {
         apagarBomba("tanque vacio");
         publicarEvento("bloqueo_tanque_vacio", 0);
         enviarTelemetria();

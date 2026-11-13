@@ -30,12 +30,20 @@ function formatExact(ms) {
   })
 }
 
-function pct(value) {
-  return value == null || Number.isNaN(Number(value)) ? 'sin dato' : `${Number(value).toFixed(0)} %`
+function formatHm(ms) {
+  return new Date(ms).toLocaleTimeString('es-CO', {
+    timeZone: TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
-function volts(value) {
-  return value == null || Number.isNaN(Number(value)) ? 'sin dato' : `${Number(value).toFixed(2)} V`
+function pct1(value) {
+  return value == null || Number.isNaN(Number(value)) ? 'sin dato' : `${Number(value).toFixed(1)} %`
+}
+
+function volts1(value) {
+  return value == null || Number.isNaN(Number(value)) ? 'sin dato' : `${Number(value).toFixed(1)} V`
 }
 
 /** Lectura real más cercana en el tiempo (ignora puntos de hueco). */
@@ -58,15 +66,26 @@ function HistoryTooltip({ active, label, points }) {
   if (!active || label == null) return null
   const point = nearestReading(points, Number(label))
   if (!point) return null
+
+  const isAvg = Boolean(point.aggregated) && !point.rawLatest
+  const title = isAvg && point.binEndT
+    ? `Promedio ${formatHm(point.t)}–${formatHm(point.binEndT)} · mín ${pct1(point.humidityMin)} · máx ${pct1(point.humidityMax)}`
+    : formatExact(point.t)
+
   return (
     <div className="rounded-xl border border-white/80 bg-white/95 px-3 py-2 text-xs shadow-lg">
-      <p className="mb-1 font-extrabold text-[#0a3d6b]">{formatExact(point.t)}</p>
+      <p className="mb-1 font-extrabold text-[#0a3d6b]">{title}</p>
+      {point.rawLatest ? (
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#6b8494]">
+          Última lectura
+        </p>
+      ) : null}
       <ul className="grid gap-0.5 text-[#16324a]">
-        <li>Humedad suelo: <b>{pct(point.humidity)}</b></li>
-        <li>Nivel tanque: <b>{pct(point.tank)}</b></li>
-        <li>Voltaje red: <b>{volts(point.vRed)}</b></li>
-        <li>Voltaje batería: <b>{volts(point.vBat)}</b></li>
-        <li>Batería: <b>{pct(point.battery)}</b></li>
+        <li>Humedad suelo: <b>{pct1(point.humidity)}</b></li>
+        <li>Nivel tanque: <b>{pct1(point.tank)}</b></li>
+        <li>Voltaje red: <b>{volts1(point.vRed)}</b></li>
+        <li>Voltaje batería: <b>{volts1(point.vBat)}</b></li>
+        <li>Batería: <b>{pct1(point.battery)}</b></li>
         <li>Bomba: <b>{point.pump ? 'encendida' : 'apagada'}</b></li>
       </ul>
     </div>
@@ -172,11 +191,11 @@ export default function HistoryChart({ data, rangeMeta, irrigations = [] }) {
             <YAxis
               domain={[0, 100]}
               ticks={[0, 25, 50, 75, 100]}
-              tickFormatter={(v) => `${v}%`}
+              tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
               tick={{ fill: '#8aa0ae', fontSize: 12 }}
               axisLine={false}
               tickLine={false}
-              width={42}
+              width={48}
             />
             <Tooltip
               content={<HistoryTooltip points={data} />}

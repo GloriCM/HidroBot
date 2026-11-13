@@ -533,7 +533,7 @@ export default function Dashboard() {
                     <span className="grid h-12 w-12 place-items-center rounded-full bg-[#1d6eab] text-white"><Droplets className="h-5 w-5" /></span>
                     <div>
                       <p className="text-sm font-semibold text-[#0a3d6b]">Humedad del suelo</p>
-                      <p className="text-2xl font-extrabold">{value == null ? '—' : `${Math.round(value)}%`} <span className="text-sm font-bold text-[#1f9d4a]">{humidityStatus}</span></p>
+                      <p className="text-2xl font-extrabold">{value == null ? '—' : `${Number(value).toFixed(1)}%`} <span className="text-sm font-bold text-[#1f9d4a]">{humidityStatus}</span></p>
                     </div>
                   </div>
                   <MiniChart data={chartData} dataKey="humidity" color="#1d6eab" />
