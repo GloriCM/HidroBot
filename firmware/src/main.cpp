@@ -53,6 +53,11 @@ const float UMBRAL_HAY_RED_V = 9.0;          // por encima de esto: hay red
 const unsigned long INTERVALO_TELEMETRIA_MS = 10000;  // envio al servidor
 const unsigned long INTERVALO_LECTURA_MS = 10000;     // lectura local de sensores
 const unsigned long RIEGO_MAX_SEG = 120;     // tope de seguridad local
+const unsigned long MQTT_CMD_TIMEOUT_MS = 10000;      // connect/publish/subscribe (latencia alta)
+const unsigned long WS_ESPERA_MS = 15000;             // esperar a que el WebSocket abra
+const unsigned long MQTT_REINTENTO_MS = 4000;         // pausa entre intentos fallidos
+const unsigned long MQTT_REINICIO_MS = 5UL * 60UL * 1000UL;  // sin MQTT con Wi-Fi → reinicio
+const int RSSI_DEBIL_DBM = -80;                      // por debajo = Wi-Fi débil
 // Defectos alineados con device_calibration de la API (hasta recibir /config).
 const float TANQUE_VACIO_CM_DEF = 40.0;
 const float TANQUE_LLENO_CM_DEF = 5.0;
@@ -76,7 +81,21 @@ unsigned long ultimaTelemetriaMs = 0;
 unsigned long ultimaLecturaMs = 0;
 unsigned long ultimaPantallaMs = 0;
 unsigned long ultimoChequeoTanqueMs = 0;
-unsigned long ultimoIntentoConexionMs = 0;
+unsigned long wifiOkDesdeMs = 0;          // desde cuándo hay Wi-Fi sin MQTT
+unsigned long connFaseDesdeMs = 0;
+unsigned long mqttReintentoEnMs = 0;
+unsigned intentosMqtt = 0;
+String motivoFalloMqtt = "";
+
+enum ConnFase : uint8_t {
+  CONN_WIFI = 0,
+  CONN_WS_INICIO,
+  CONN_WS_ESPERA,
+  CONN_MQTT,
+  CONN_OK,
+  CONN_PAUSA,
+};
+ConnFase connFase = CONN_WIFI;
 
 int sueloRaw = 0;
 float distanciaCm = -1;   // -1 = sin lectura valida todavia
@@ -153,9 +172,16 @@ void actualizarPantalla() {
   } else {
     pantalla.println("Bomba: OFF");
   }
-  pantalla.printf("WiFi:%s MQTT:%s\n",
-                  WiFi.status() == WL_CONNECTED ? "ok" : "--",
-                  mqtt.isConnected() ? "ok" : "--");
+  if (mqtt.isConnected()) {
+    pantalla.printf("WiFi:%s MQTT:ok\n", WiFi.status() == WL_CONNECTED ? "ok" : "--");
+  } else {
+    pantalla.printf("MQTT x%d RSSI:%d\n", intentosMqtt, WiFi.RSSI());
+    if (motivoFalloMqtt.length()) {
+      pantalla.println(motivoFalloMqtt.c_str());
+    } else {
+      pantalla.println("Conectando MQTT...");
+    }
+  }
   pantalla.display();
 }
 
@@ -342,43 +368,150 @@ void procesarComandoPendiente() {
   enviarTelemetria();
 }
 
-// ===================== CONEXION =====================
-void conectar() {
-  apagarBomba("sin conexion");  // seguridad: sin conexion no se riega
+// ===================== CONEXION (no bloqueante desde loop) =====================
+void registrarFalloMqtt(const String& motivo) {
+  intentosMqtt++;
+  motivoFalloMqtt = motivo;
+  Serial.printf("MQTT fallo #%u: %s (RSSI %d)\n", intentosMqtt, motivo.c_str(), WiFi.RSSI());
+  String msg = motivo + "\nIntento " + String(intentosMqtt);
+  mostrarMensaje(msg.c_str());
+  mqttReintentoEnMs = millis() + MQTT_REINTENTO_MS;
+  connFase = CONN_PAUSA;
+}
 
-  if (WiFi.status() != WL_CONNECTED) {
-    mostrarMensaje("Conectando WiFi...");
-    WiFi.begin();  // usa la red guardada desde el portal
-    unsigned long t = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t < 20000) delay(500);
-    if (WiFi.status() != WL_CONNECTED) {
-      mostrarMensaje("WiFi no disponible");
-      return;
-    }
-    Serial.printf("WiFi conectado. IP: %s\n", WiFi.localIP().toString().c_str());
+String clasificarFalloMqtt(bool wsListo) {
+  int rssi = WiFi.RSSI();
+  if (WiFi.status() != WL_CONNECTED) return "Sin WiFi";
+  if (!wsListo || rssi <= RSSI_DEBIL_DBM) {
+    if (rssi <= RSSI_DEBIL_DBM) return "WiFi debil (RSSI)";  // OLED sin tilde
   }
-
-  mostrarMensaje("Conectando MQTT...");
-  wsClient.disconnect();
-  wsClient.beginSSL(MQTT_HOST, MQTT_PORT, MQTT_PATH, "", "mqtt");
-  wsClient.setReconnectInterval(2000);
-  mqtt.setWill(TOPIC_ESTADO, "offline", true, 1);
-
-  unsigned long t = millis();
-  while (!mqtt.connect(DEVICE_ID, MQTT_USER, MQTT_PASS)) {
-    delay(1000);
-    if (WiFi.status() != WL_CONNECTED || millis() - t > 20000) {
-      mostrarMensaje("MQTT no disponible");
-      return;
-    }
+  lwmqtt_err_t err = mqtt.getLastError();
+  if (err == LWMQTT_CONNECTION_DENIED) {
+    return "Usuario/clave MQTT incorrectos";
   }
+  if (!wsListo || err == LWMQTT_NETWORK_TIMEOUT || err == LWMQTT_NETWORK_FAILED_READ ||
+      err == LWMQTT_NETWORK_FAILED_WRITE || err == LWMQTT_MISSING_OR_WRONG_PACKET ||
+      err == LWMQTT_NETWORK_FAILED_CONNECT) {
+    return "Servidor tarda en responder";
+  }
+  if (rssi <= RSSI_DEBIL_DBM) return "WiFi debil (RSSI)";
+  return "Servidor tarda en responder";
+}
 
+void mqttListo() {
   mqtt.subscribe(TOPIC_COMANDO, alRecibirComando);
   mqtt.subscribe(TOPIC_CONFIG, alRecibirConfig);
   mqtt.publish(TOPIC_ESTADO, "online", true, 1);
+  motivoFalloMqtt = "";
+  wifiOkDesdeMs = 0;
+  connFase = CONN_OK;
+  Serial.printf("MQTT conectado (intentos previos: %u, RSSI %d)\n", intentosMqtt, WiFi.RSSI());
   mostrarMensaje("Conectado!");
   enviarTelemetria();
   ultimaTelemetriaMs = millis();
+}
+
+void prepararBrokerWs() {
+  wsClient.disconnect();
+  wsClient.beginSSL(MQTT_HOST, MQTT_PORT, MQTT_PATH, "", "mqtt");
+  wsClient.setReconnectInterval(2000);
+  mqtt.setTimeout(MQTT_CMD_TIMEOUT_MS);
+  mqtt.setWill(TOPIC_ESTADO, "offline", true, 1);
+  connFaseDesdeMs = millis();
+  connFase = CONN_WS_ESPERA;
+  Serial.println("Esperando WebSocket MQTT...");
+}
+
+// Avanza la conexion en trozos cortos; loop() sigue atendiendo bomba/BOOT/OLED.
+void tickConexion() {
+  const unsigned long ahora = millis();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.setSleep(false);
+    if (wifiOkDesdeMs == 0 && !mqtt.isConnected()) wifiOkDesdeMs = ahora;
+  } else {
+    wifiOkDesdeMs = 0;
+  }
+
+  // Con Wi-Fi OK pero sin MQTT demasiado tiempo → reinicio (red universitaria inestable).
+  if (WiFi.status() == WL_CONNECTED && !mqtt.isConnected() &&
+      wifiOkDesdeMs != 0 && (ahora - wifiOkDesdeMs) >= MQTT_REINICIO_MS) {
+    Serial.println("Mas de 5 min sin MQTT con WiFi: reiniciando ESP32");
+    mostrarMensaje("Sin MQTT 5 min\nReiniciando...");
+    delay(500);
+    ESP.restart();
+  }
+
+  if (mqtt.isConnected()) {
+    if (connFase != CONN_OK) connFase = CONN_OK;
+    return;
+  }
+
+  // Sin MQTT: bomba apagada por seguridad (idempotente).
+  if (bombaEncendida) apagarBomba("sin conexion");
+
+  switch (connFase) {
+    case CONN_OK:
+      connFase = CONN_WIFI;
+      // fallthrough
+    case CONN_WIFI:
+      if (WiFi.status() != WL_CONNECTED) {
+        static unsigned long ultimoWifiBeginMs = 0;
+        if (ahora - ultimoWifiBeginMs > 5000) {
+          ultimoWifiBeginMs = ahora;
+          mostrarMensaje("Conectando WiFi...");
+          WiFi.begin();  // credenciales del portal
+          Serial.println("WiFi.begin() (red guardada)");
+        }
+        return;
+      }
+      Serial.printf("WiFi OK IP:%s RSSI:%d\n",
+                    WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      WiFi.setSleep(false);
+      connFase = CONN_WS_INICIO;
+      break;
+
+    case CONN_WS_INICIO:
+      prepararBrokerWs();
+      break;
+
+    case CONN_WS_ESPERA:
+      wsClient.loop();
+      if (wsClient.isConnected()) {
+        Serial.println("WebSocket listo; conectando MQTT...");
+        connFase = CONN_MQTT;
+        break;
+      }
+      if (ahora - connFaseDesdeMs >= WS_ESPERA_MS) {
+        String motivo = (WiFi.RSSI() <= RSSI_DEBIL_DBM)
+                            ? String("WiFi debil (RSSI)")
+                            : String("Servidor tarda en responder");
+        registrarFalloMqtt(motivo);  // OLED ASCII-safe: sin tilde
+      }
+      break;
+
+    case CONN_MQTT: {
+      // Una sola llamada: puede tardar hasta MQTT_CMD_TIMEOUT_MS (necesario por TLS/túnel).
+      bool ok = mqtt.connect(DEVICE_ID, MQTT_USER, MQTT_PASS);
+      if (ok) {
+        mqttListo();
+      } else {
+        bool wsOk = wsClient.isConnected();
+        registrarFalloMqtt(clasificarFalloMqtt(wsOk));
+        Serial.printf("lastError=%d returnCode=%d\n",
+                      (int)mqtt.getLastError(), (int)mqtt.getReturnCode());
+      }
+      break;
+    }
+
+    case CONN_PAUSA:
+      if ((long)(ahora - mqttReintentoEnMs) >= 0) {
+        connFase = CONN_WS_INICIO;
+      } else {
+        wsClient.loop();  // mantener el stack WS vivo durante la pausa
+      }
+      break;
+  }
 }
 
 // ===================== WI-FI DESDE EL CELULAR =====================
@@ -499,28 +632,31 @@ void setup() {
   TOPIC_CONFIG = base + "config";
 
   mqtt.begin(wsClient);
+  mqtt.setTimeout(MQTT_CMD_TIMEOUT_MS);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);  // menos latencia en redes débiles / túnel TLS
   pinMode(PIN_BOTON_CONFIG, INPUT_PULLUP);
 
   leerSensores();
   configurarWifi(false);
-  conectar();
-  ultimoIntentoConexionMs = millis();
+  WiFi.setSleep(false);
+  connFase = CONN_WIFI;
+  wifiOkDesdeMs = (WiFi.status() == WL_CONNECTED) ? millis() : 0;
 }
 
 void loop() {
   unsigned long ahora = millis();
   revisarBotonConfig();
 
-  // Reconexion automatica
-  if ((WiFi.status() != WL_CONNECTED || !mqtt.isConnected()) &&
-      ahora - ultimoIntentoConexionMs > 5000) {
-    ultimoIntentoConexionMs = ahora;
-    conectar();
-  }
+  // Conexion Wi-Fi / WebSocket / MQTT en pasos (no bloquea BOOT ni la bomba).
+  tickConexion();
 
-  mqtt.update();
+  if (mqtt.isConnected()) {
+    mqtt.update();
+  } else {
+    wsClient.loop();
+  }
   procesarComandoPendiente();
   procesarConfigPendiente();
 

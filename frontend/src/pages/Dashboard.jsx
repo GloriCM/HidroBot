@@ -65,6 +65,108 @@ function clientRangeMeta(rangeKey) {
   return { fromT: toT - hours * 60 * 60 * 1000, toT, key: rangeKey }
 }
 
+/** Acepta "12,6" y "12.6". */
+function parseLocaleNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
+  if (value == null) return NaN
+  const text = String(value).trim().replace(/\s/g, '').replace(',', '.')
+  if (!text) return NaN
+  return Number(text)
+}
+
+function settingsFromSummary(data) {
+  return {
+    thresholdPct: data.settings?.thresholdPct ?? 35,
+    maxIrrigationSeconds: data.settings?.maxIrrigationSeconds ?? 60,
+    mode: data.settings?.mode ?? 'auto',
+    tankMinPct: data.settings?.tankMinPct ?? 10,
+    batteryMinPct: data.settings?.batteryMinPct ?? 30,
+    allowManualOnBattery: data.settings?.allowManualOnBattery ?? false,
+  }
+}
+
+function calibrationFromSummary(data) {
+  return {
+    humidityRawDry: data.calibration?.humidityRawDry ?? 3000,
+    humidityRawWet: data.calibration?.humidityRawWet ?? 1200,
+    distanceFullCm: data.calibration?.distanceFullCm ?? 5,
+    distanceEmptyCm: data.calibration?.distanceEmptyCm ?? 40,
+    batteryVEmpty: data.calibration?.batteryVEmpty ?? 9,
+    batteryVFull: data.calibration?.batteryVFull ?? 12.6,
+  }
+}
+
+function sameSettings(a, b) {
+  if (!a || !b) return false
+  return (
+    parseLocaleNumber(a.thresholdPct) === parseLocaleNumber(b.thresholdPct) &&
+    parseLocaleNumber(a.maxIrrigationSeconds) === parseLocaleNumber(b.maxIrrigationSeconds) &&
+    a.mode === b.mode &&
+    parseLocaleNumber(a.tankMinPct) === parseLocaleNumber(b.tankMinPct) &&
+    parseLocaleNumber(a.batteryMinPct) === parseLocaleNumber(b.batteryMinPct) &&
+    Boolean(a.allowManualOnBattery) === Boolean(b.allowManualOnBattery)
+  )
+}
+
+function sameCalibration(a, b) {
+  if (!a || !b) return false
+  const keys = [
+    'humidityRawDry',
+    'humidityRawWet',
+    'distanceFullCm',
+    'distanceEmptyCm',
+    'batteryVEmpty',
+    'batteryVFull',
+  ]
+  return keys.every((key) => parseLocaleNumber(a[key]) === parseLocaleNumber(b[key]))
+}
+
+function validateSettingsDraft(draft) {
+  const thresholdPct = parseLocaleNumber(draft.thresholdPct)
+  const maxIrrigationSeconds = parseLocaleNumber(draft.maxIrrigationSeconds)
+  const tankMinPct = parseLocaleNumber(draft.tankMinPct)
+  const batteryMinPct = parseLocaleNumber(draft.batteryMinPct)
+  if (![thresholdPct, maxIrrigationSeconds, tankMinPct, batteryMinPct].every(Number.isFinite)) {
+    return 'Revisa los números (usa punto o coma para decimales).'
+  }
+  if (thresholdPct < 0 || thresholdPct > 100) return 'El umbral de humedad debe estar entre 0 y 100.'
+  if (tankMinPct < 0 || tankMinPct > 100) return 'El tanque mínimo debe estar entre 0 y 100.'
+  if (batteryMinPct < 0 || batteryMinPct > 100) return 'La batería mínima debe estar entre 0 y 100.'
+  if (!Number.isInteger(maxIrrigationSeconds) || maxIrrigationSeconds < 1 || maxIrrigationSeconds > 600) {
+    return 'La duración máxima debe ser un entero entre 1 y 600 s.'
+  }
+  return null
+}
+
+function validateCalibrationDraft(draft) {
+  const humidityRawDry = parseLocaleNumber(draft.humidityRawDry)
+  const humidityRawWet = parseLocaleNumber(draft.humidityRawWet)
+  const distanceFullCm = parseLocaleNumber(draft.distanceFullCm)
+  const distanceEmptyCm = parseLocaleNumber(draft.distanceEmptyCm)
+  const batteryVEmpty = parseLocaleNumber(draft.batteryVEmpty)
+  const batteryVFull = parseLocaleNumber(draft.batteryVFull)
+  const values = [humidityRawDry, humidityRawWet, distanceFullCm, distanceEmptyCm, batteryVEmpty, batteryVFull]
+  if (!values.every(Number.isFinite)) {
+    return 'Revisa los números (usa punto o coma para decimales).'
+  }
+  if (!Number.isInteger(humidityRawDry) || !Number.isInteger(humidityRawWet)) {
+    return 'Los raw de humedad deben ser enteros.'
+  }
+  if (humidityRawDry <= humidityRawWet) {
+    return 'El raw seco debe ser mayor que el raw mojado.'
+  }
+  if (distanceEmptyCm <= distanceFullCm) {
+    return 'La distancia vacío debe ser mayor que la de lleno.'
+  }
+  if (batteryVFull <= batteryVEmpty) {
+    return 'El voltaje lleno debe ser mayor que el vacío.'
+  }
+  if (batteryVEmpty < 0 || batteryVFull > 20) {
+    return 'Los voltajes de batería no tienen sentido (0–20 V).'
+  }
+  return null
+}
+
 function MiniChart({ data, dataKey, color }) {
   if (!data?.length) return <div className="mt-2 h-10" />
   return (
@@ -102,32 +204,38 @@ export default function Dashboard() {
   }))
   const [settingsDraft, setSettingsDraft] = useState({})
   const [calDraft, setCalDraft] = useState({})
+  const [settingsBaseline, setSettingsBaseline] = useState(null)
+  const [calBaseline, setCalBaseline] = useState(null)
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
   const [profileNote, setProfileNote] = useState('')
   const [profileError, setProfileError] = useState('')
   const [profileTab, setProfileTab] = useState('datos')
   const menuRef = useRef(null)
+  const formsHydratedRef = useRef(false)
+  const settingsDirtyRef = useRef(false)
+  const calDirtyRef = useRef(false)
+  const summaryRef = useRef(emptySummary)
 
-  const loadSummary = useCallback(async () => {
+  const syncFormsFrom = useCallback((data) => {
+    if (!data) return
+    const nextSettings = settingsFromSummary(data)
+    const nextCal = calibrationFromSummary(data)
+    setSettingsDraft(nextSettings)
+    setCalDraft(nextCal)
+    setSettingsBaseline(nextSettings)
+    setCalBaseline(nextCal)
+    formsHydratedRef.current = true
+  }, [])
+
+  const loadSummary = useCallback(async ({ syncForms = false } = {}) => {
     try {
       const data = await api.panelSummary()
       setSummary(data)
-      setSettingsDraft({
-        thresholdPct: data.settings?.thresholdPct ?? 35,
-        maxIrrigationSeconds: data.settings?.maxIrrigationSeconds ?? 60,
-        mode: data.settings?.mode ?? 'auto',
-        tankMinPct: data.settings?.tankMinPct ?? 10,
-        batteryMinPct: data.settings?.batteryMinPct ?? 30,
-        allowManualOnBattery: data.settings?.allowManualOnBattery ?? false,
-      })
-      setCalDraft({
-        humidityRawDry: data.calibration?.humidityRawDry ?? 3000,
-        humidityRawWet: data.calibration?.humidityRawWet ?? 1200,
-        distanceFullCm: data.calibration?.distanceFullCm ?? 5,
-        distanceEmptyCm: data.calibration?.distanceEmptyCm ?? 40,
-        batteryVEmpty: data.calibration?.batteryVEmpty ?? 9,
-        batteryVFull: data.calibration?.batteryVFull ?? 12.6,
-      })
+      summaryRef.current = data
+      // Solo hidratar formularios la 1ª vez, al abrir Configuración (si está limpio) o tras guardar.
+      if (syncForms || !formsHydratedRef.current) {
+        syncFormsFrom(data)
+      }
       setError('')
       return data
     } catch (err) {
@@ -136,7 +244,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [syncFormsFrom])
 
   const loadSeries = useCallback(async (deviceId, nextRange) => {
     if (!deviceId) {
@@ -164,7 +272,7 @@ export default function Dashboard() {
       if (cancelled || !data?.device?.id) return
       await loadSeries(data.device.id, range)
     })()
-    // El ESP32 envía cada 10 s: refrescar en el mismo ritmo sin recargar la página.
+    // El ESP32 envía cada 10 s: refresca telemetría sin tocar los borradores del formulario.
     const id = setInterval(() => {
       void loadSummary().then((data) => {
         if (data?.device?.id) void loadSeries(data.device.id, range)
@@ -175,6 +283,15 @@ export default function Dashboard() {
       clearInterval(id)
     }
   }, [ready, user, loadSummary, loadSeries, range])
+
+  // Al abrir Configuración, recarga el formulario solo si no hay cambios pendientes.
+  useEffect(() => {
+    if (section !== 'sistema') return
+    if (settingsDirtyRef.current || calDirtyRef.current) return
+    if (summaryRef.current?.settings || summaryRef.current?.calibration) {
+      syncFormsFrom(summaryRef.current)
+    }
+  }, [section, syncFormsFrom])
 
   useEffect(() => {
     if (!user) return
@@ -217,6 +334,11 @@ export default function Dashboard() {
   const online = summary.online
   const pump = summary.pump
   const onBattery = summary.onBattery
+  const settingsDirty = Boolean(settingsBaseline) && !sameSettings(settingsDraft, settingsBaseline)
+  const calDirty = Boolean(calBaseline) && !sameCalibration(calDraft, calBaseline)
+  settingsDirtyRef.current = settingsDirty
+  calDirtyRef.current = calDirty
+  const formsDirty = settingsDirty || calDirty
   const state = moistureState(value, threshold, watch)
   const humidityStatus = !summary.device
     ? 'Sin dispositivo'
@@ -338,19 +460,24 @@ export default function Dashboard() {
   async function saveSettings(event) {
     event.preventDefault()
     if (!summary.zone?.id || busy) return
+    const invalid = validateSettingsDraft(settingsDraft)
+    if (invalid) {
+      setActionError(invalid)
+      return
+    }
     setBusy(true)
     setActionError('')
     try {
       await api.patchSettings(summary.zone.id, {
-        thresholdPct: Number(settingsDraft.thresholdPct),
-        maxIrrigationSeconds: Number(settingsDraft.maxIrrigationSeconds),
+        thresholdPct: parseLocaleNumber(settingsDraft.thresholdPct),
+        maxIrrigationSeconds: Math.round(parseLocaleNumber(settingsDraft.maxIrrigationSeconds)),
         mode: settingsDraft.mode,
-        tankMinPct: Number(settingsDraft.tankMinPct),
-        batteryMinPct: Number(settingsDraft.batteryMinPct),
+        tankMinPct: parseLocaleNumber(settingsDraft.tankMinPct),
+        batteryMinPct: parseLocaleNumber(settingsDraft.batteryMinPct),
         allowManualOnBattery: Boolean(settingsDraft.allowManualOnBattery),
       })
       setActionNote('Configuración guardada.')
-      await loadSummary()
+      await loadSummary({ syncForms: true })
     } catch (err) {
       setActionError(err.message)
     } finally {
@@ -361,19 +488,24 @@ export default function Dashboard() {
   async function saveCalibration(event) {
     event.preventDefault()
     if (!summary.device?.id || busy) return
+    const invalid = validateCalibrationDraft(calDraft)
+    if (invalid) {
+      setActionError(invalid)
+      return
+    }
     setBusy(true)
     setActionError('')
     try {
       await api.patchCalibration(summary.device.id, {
-        humidityRawDry: Number(calDraft.humidityRawDry),
-        humidityRawWet: Number(calDraft.humidityRawWet),
-        distanceFullCm: Number(calDraft.distanceFullCm),
-        distanceEmptyCm: Number(calDraft.distanceEmptyCm),
-        batteryVEmpty: Number(calDraft.batteryVEmpty),
-        batteryVFull: Number(calDraft.batteryVFull),
+        humidityRawDry: Math.round(parseLocaleNumber(calDraft.humidityRawDry)),
+        humidityRawWet: Math.round(parseLocaleNumber(calDraft.humidityRawWet)),
+        distanceFullCm: parseLocaleNumber(calDraft.distanceFullCm),
+        distanceEmptyCm: parseLocaleNumber(calDraft.distanceEmptyCm),
+        batteryVEmpty: parseLocaleNumber(calDraft.batteryVEmpty),
+        batteryVFull: parseLocaleNumber(calDraft.batteryVFull),
       })
       setActionNote('Calibración guardada.')
-      await loadSummary()
+      await loadSummary({ syncForms: true })
     } catch (err) {
       setActionError(err.message)
     } finally {
@@ -382,16 +514,39 @@ export default function Dashboard() {
   }
 
   async function captureSoil(kind) {
+    if (!summary.device?.id || busy) return
     const raw = summary.latest?.humidityRaw
     if (raw == null) {
       setActionError('Aún no hay humedad_raw del sensor.')
       return
     }
-    setCalDraft((current) => ({
-      ...current,
-      [kind === 'dry' ? 'humidityRawDry' : 'humidityRawWet']: raw,
-    }))
-    setActionNote(kind === 'dry' ? `Seco guardado como ${raw}` : `Mojado guardado como ${raw}`)
+    const key = kind === 'dry' ? 'humidityRawDry' : 'humidityRawWet'
+    const nextDraft = { ...calDraft, [key]: raw }
+    // Valida el par seco/mojado con el nuevo valor antes de guardar.
+    const invalid = validateCalibrationDraft(nextDraft)
+    if (invalid) {
+      setCalDraft(nextDraft)
+      setActionError(invalid)
+      return
+    }
+    setBusy(true)
+    setActionError('')
+    setCalDraft(nextDraft)
+    try {
+      await api.patchCalibration(summary.device.id, { [key]: Number(raw) })
+      setCalBaseline((current) => ({ ...(current || nextDraft), [key]: raw }))
+      setActionNote(
+        kind === 'dry'
+          ? `Seco guardado como ${raw} (última lectura).`
+          : `Mojado guardado como ${raw} (última lectura).`,
+      )
+      // Actualiza telemetría/servidor sin pisar otros campos del borrador.
+      await loadSummary({ syncForms: false })
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function createDevice() {
@@ -408,7 +563,7 @@ export default function Dashboard() {
       setActionNote(
         `Dispositivo ${created.device.mqttId} creado. Añade la clave en DEVICE_API_KEYS de Node-RED.`,
       )
-      await loadSummary()
+      await loadSummary({ syncForms: true })
     } catch (err) {
       setActionError(err.message)
     } finally {
@@ -632,7 +787,14 @@ export default function Dashboard() {
 
                 {show('sistema') && (
                   <article className={`${glass} p-4`}>
-                    <h2 className="mb-3 font-extrabold">Configuración</h2>
+                    <header className="mb-3 flex items-center justify-between gap-3">
+                      <h2 className="font-extrabold">Configuración</h2>
+                      {formsDirty ? (
+                        <span className="rounded-full bg-[#fff4e5] px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-[#9a5b00]">
+                          Cambios sin guardar
+                        </span>
+                      ) : null}
+                    </header>
                     {!summary.device && summary.zone ? (
                       <div className="grid gap-2">
                         <label className="block text-sm font-bold text-[#0a3d6b]">
@@ -654,7 +816,14 @@ export default function Dashboard() {
                           ].map(([key, label]) => (
                             <label key={key} className="block text-sm font-bold text-[#0a3d6b]">
                               {label}
-                              <input className="mt-1 h-10 w-full rounded-xl border border-[#d7e3ee] bg-white px-3" type="number" value={settingsDraft[key] ?? ''} onChange={(e) => setSettingsDraft((c) => ({ ...c, [key]: e.target.value }))} />
+                              <input
+                                className="mt-1 h-10 w-full rounded-xl border border-[#d7e3ee] bg-white px-3"
+                                type="text"
+                                inputMode="decimal"
+                                autoComplete="off"
+                                value={settingsDraft[key] ?? ''}
+                                onChange={(e) => setSettingsDraft((c) => ({ ...c, [key]: e.target.value }))}
+                              />
                             </label>
                           ))}
                           <label className="flex items-center justify-between text-sm font-bold text-[#0a3d6b]">
@@ -672,10 +841,12 @@ export default function Dashboard() {
 
                         <form className="mt-5 grid gap-2 border-t border-[#e7eef3] pt-4" onSubmit={saveCalibration}>
                           <h3 className="font-extrabold">Calibraciones</h3>
-                          <p className="text-xs font-semibold text-[#6b8494]">Pon el sensor en tierra seca y pulsa “Guardar como seco”.</p>
+                          <p className="text-xs font-semibold text-[#6b8494]">
+                            Usa la última lectura cruda ({summary.latest?.humidityRaw ?? 'sin dato'}) y pulsa “Guardar como seco/mojado”.
+                          </p>
                           <div className="grid grid-cols-2 gap-2">
-                            <button type="button" className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold" onClick={() => { void captureSoil('dry') }}>Guardar como seco</button>
-                            <button type="button" className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold" onClick={() => { void captureSoil('wet') }}>Guardar como mojado</button>
+                            <button type="button" className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold" disabled={busy} onClick={() => { void captureSoil('dry') }}>Guardar como seco</button>
+                            <button type="button" className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold" disabled={busy} onClick={() => { void captureSoil('wet') }}>Guardar como mojado</button>
                           </div>
                           {[
                             ['humidityRawDry', 'Raw seco'],
@@ -687,7 +858,14 @@ export default function Dashboard() {
                           ].map(([key, label]) => (
                             <label key={key} className="block text-sm font-bold text-[#0a3d6b]">
                               {label}
-                              <input className="mt-1 h-10 w-full rounded-xl border border-[#d7e3ee] bg-white px-3" type="number" step="any" value={calDraft[key] ?? ''} onChange={(e) => setCalDraft((c) => ({ ...c, [key]: e.target.value }))} />
+                              <input
+                                className="mt-1 h-10 w-full rounded-xl border border-[#d7e3ee] bg-white px-3"
+                                type="text"
+                                inputMode="decimal"
+                                autoComplete="off"
+                                value={calDraft[key] ?? ''}
+                                onChange={(e) => setCalDraft((c) => ({ ...c, [key]: e.target.value }))}
+                              />
                             </label>
                           ))}
                           <button className="h-11 rounded-xl border border-[#d7e3ee] bg-white font-extrabold text-[#0a3d6b]" type="submit" disabled={busy}>Guardar calibración</button>
