@@ -319,12 +319,19 @@ void procesarConfigPendiente() {
     return;
   }
 
+  // Ajustes globales opcionales (si faltan, se conservan los actuales).
+  if (!doc["umbral_humedad"].isNull()) {
+    // reservado para riego local futuro; hoy solo se registra
+    Serial.printf("umbral_humedad=%d\n", doc["umbral_humedad"].as<int>());
+  }
+
   JsonVariant cal = doc["calibracion"];
   if (cal.isNull() || !cal.is<JsonObject>()) {
     Serial.println("Config sin calibracion; se mantienen valores NVS/defecto");
     return;
   }
 
+  // Si un campo falta, conserva el valor anterior (NVS/defecto).
   if (!cal["humedad_raw_seco"].isNull()) {
     sueloRawSeco = cal["humedad_raw_seco"].as<int>();
   }
@@ -339,9 +346,15 @@ void procesarConfigPendiente() {
   }
 
   guardarCalibracionNvs();
-  Serial.printf("Calibracion guardada: seco=%d mojado=%d lleno=%.1f vacio=%.1f\n",
-                sueloRawSeco, sueloRawMojado, distanciaLlenoCm, distanciaVacioCm);
-  actualizarPantalla();
+  Serial.println("=== Calibracion aplicada ===");
+  Serial.printf("  humedad_raw_seco=%d\n", sueloRawSeco);
+  Serial.printf("  humedad_raw_mojado=%d\n", sueloRawMojado);
+  Serial.printf("  distancia_lleno_cm=%.2f\n", distanciaLlenoCm);
+  Serial.printf("  distancia_vacio_cm=%.2f\n", distanciaVacioCm);
+  Serial.printf("  OLED suelo ahora=%.1f%% (raw=%d)\n",
+                humedadPctDesdeRaw(sueloRaw), sueloRaw);
+  mostrarMensaje("Calibracion\nactualizada");
+  ultimaPantallaMs = millis();  // deja el aviso ~1 s antes de refrescar telemetria
 }
 
 void procesarComandoPendiente() {

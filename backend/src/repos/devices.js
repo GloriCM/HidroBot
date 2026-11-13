@@ -80,6 +80,19 @@ export async function updateDeviceRuntime(db, deviceId, { online, source, pump, 
 /**
  * @param {import('pg').Pool | import('pg').PoolClient} db
  */
+/**
+ * Todos los dispositivos (para republicar config al arrancar la API).
+ * @param {import('pg').Pool | import('pg').PoolClient} db
+ */
+export async function listAllDevices(db) {
+  const result = await db.query(
+    `SELECT id, zone_id, name, mqtt_id, online, last_seen_at, last_source, last_pump, created_at
+     FROM devices
+     ORDER BY created_at`,
+  )
+  return result.rows
+}
+
 export async function listStaleDevices(db, offlineMinutes) {
   const result = await db.query(
     `SELECT d.id, d.name, d.zone_id, d.last_seen_at, d.mqtt_id, g.user_id

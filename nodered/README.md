@@ -26,3 +26,9 @@
 ```
 
 La API usa `NODERED_COMMAND_URL=http://nodered:1880/hidrobot/publish`.
+
+## Config retenida
+
+`kind: "config"` se publica en `hidrobot/<mqttId>/config` con **QoS 1** y **retain = true**
+(nodo MQTT dedicado, no depende de `msg.retain`). Al arrancar, la API republica la
+config de todos los dispositivos. Tras guardar calibración/ajustes en el panel también.

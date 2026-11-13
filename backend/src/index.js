@@ -4,6 +4,7 @@ import { closePool } from './db/pool.js'
 import { runMigrations } from './db/migrate.js'
 import { startMaintenanceJobs } from './jobs/maintenance.js'
 import { seedDemo } from './seed/demo.js'
+import { pushAllDeviceConfigs } from './services/panelService.js'
 
 async function main() {
   const config = loadConfig()
@@ -26,6 +27,15 @@ async function main() {
 
   await app.listen({ port: config.PORT, host: '0.0.0.0' })
   console.log(`API escuchando en :${config.PORT}`)
+
+  // Republica calibración/ajustes retenidos para que el ESP32 los reciba al conectar.
+  try {
+    const pushed = await pushAllDeviceConfigs(app)
+    const ok = pushed.filter((row) => row.ok).length
+    console.log(`Config MQTT republicada: ${ok}/${pushed.length} dispositivos`)
+  } catch (error) {
+    console.warn('No se pudo republicar config MQTT al arrancar:', error.message)
+  }
 
   const shutdown = async (signal) => {
     console.log(`Señal ${signal}, cerrando…`)

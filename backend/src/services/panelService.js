@@ -8,7 +8,13 @@ import {
   insertCommand,
   latestAckedIrrigation,
 } from '../repos/commands.js'
-import { insertDevice, listDevicesByZone, listStaleDevices, updateDeviceRuntime } from '../repos/devices.js'
+import {
+  insertDevice,
+  listAllDevices,
+  listDevicesByZone,
+  listStaleDevices,
+  updateDeviceRuntime,
+} from '../repos/devices.js'
 import { listGardensByUser } from '../repos/gardens.js'
 import { listIrrigations, listIrrigationsInRange, openIrrigation } from '../repos/irrigations.js'
 import { getDeviceForUser, getZoneForUser } from '../repos/ownership.js'
@@ -276,20 +282,58 @@ async function pushConfig(app, device) {
     tank_min_pct: Number(settings?.tank_min_pct ?? 10),
     battery_min_pct: Number(settings?.battery_min_pct ?? 30),
     allow_manual_on_battery: Boolean(settings?.allow_manual_on_battery),
+    // Nombres exactos que lee el firmware (Preferences / OLED).
     calibracion: {
-      humedad_raw_seco: calibration.humidity_raw_dry,
-      humedad_raw_mojado: calibration.humidity_raw_wet,
+      humedad_raw_seco: Number(calibration.humidity_raw_dry),
+      humedad_raw_mojado: Number(calibration.humidity_raw_wet),
       distancia_lleno_cm: Number(calibration.distance_full_cm),
       distancia_vacio_cm: Number(calibration.distance_empty_cm),
       bateria_v_vacio: Number(calibration.battery_v_empty),
       bateria_v_lleno: Number(calibration.battery_v_full),
     },
   }
-  return publishToNodeRed(app.config, {
+  const result = await publishToNodeRed(app.config, {
     mqttId: device.mqtt_id,
     kind: 'config',
     payload,
+    log: app.log,
   })
+  if (!result.ok) {
+    app.log?.warn(
+      {
+        mqttId: device.mqtt_id,
+        deviceId: device.id,
+        reason: result.reason,
+        calibracion: payload.calibracion,
+      },
+      'No se pudo publicar config retenida en MQTT vía Node-RED',
+    )
+  } else {
+    app.log?.info(
+      {
+        mqttId: device.mqtt_id,
+        deviceId: device.id,
+        humedad_raw_seco: payload.calibracion.humedad_raw_seco,
+        humedad_raw_mojado: payload.calibracion.humedad_raw_mojado,
+      },
+      'Config publicada en hidrobot/<id>/config (retain)',
+    )
+  }
+  return result
+}
+
+/** Republica la config retenida de todos los dispositivos (arranque de la API). */
+export async function pushAllDeviceConfigs(app) {
+  const devices = await listAllDevices(app.db)
+  app.log?.info({ count: devices.length }, 'Republicando config MQTT de dispositivos')
+  const results = []
+  for (const device of devices) {
+    results.push({
+      mqttId: device.mqtt_id,
+      ...(await pushConfig(app, device)),
+    })
+  }
+  return results
 }
 
 export async function getPanelSummary(app, userId) {
