@@ -4,16 +4,17 @@
 export async function insertIrrigationEvent(db, {
   zoneId,
   deviceId,
+  ownershipId = null,
   reason,
   secondsRequested,
   startedAt = new Date(),
 }) {
   const result = await db.query(
     `INSERT INTO irrigation_events
-       (zone_id, device_id, started_at, reason, seconds_requested)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, zone_id, device_id, started_at, ended_at, reason, seconds_requested, seconds_actual`,
-    [zoneId, deviceId ?? null, startedAt, reason, secondsRequested ?? null],
+       (zone_id, device_id, ownership_id, started_at, reason, seconds_requested)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, zone_id, device_id, ownership_id, started_at, ended_at, reason, seconds_requested, seconds_actual`,
+    [zoneId, deviceId ?? null, ownershipId, startedAt, reason, secondsRequested ?? null],
   )
   return result.rows[0]
 }
@@ -57,15 +58,24 @@ export async function openIrrigation(db, zoneId) {
 /**
  * @param {import('pg').Pool | import('pg').PoolClient} db
  */
-export async function listIrrigations(db, zoneId, limit = 50) {
-  const result = await db.query(
-    `SELECT id, zone_id, device_id, started_at, ended_at, reason, seconds_requested, seconds_actual
-     FROM irrigation_events
-     WHERE zone_id = $1
-     ORDER BY started_at DESC
-     LIMIT $2`,
-    [zoneId, limit],
-  )
+export async function listIrrigations(db, zoneId, limit = 50, ownershipId = null) {
+  const result = ownershipId
+    ? await db.query(
+        `SELECT id, zone_id, device_id, started_at, ended_at, reason, seconds_requested, seconds_actual
+         FROM irrigation_events
+         WHERE zone_id = $1 AND ownership_id = $2
+         ORDER BY started_at DESC
+         LIMIT $3`,
+        [zoneId, ownershipId, limit],
+      )
+    : await db.query(
+        `SELECT id, zone_id, device_id, started_at, ended_at, reason, seconds_requested, seconds_actual
+         FROM irrigation_events
+         WHERE zone_id = $1
+         ORDER BY started_at DESC
+         LIMIT $2`,
+        [zoneId, limit],
+      )
   return result.rows
 }
 
@@ -73,16 +83,30 @@ export async function listIrrigations(db, zoneId, limit = 50) {
  * Riegos que intersectan un rango de tiempo (para marcas en el gráfico).
  * @param {import('pg').Pool | import('pg').PoolClient} db
  */
-export async function listIrrigationsInRange(db, { zoneId, from, to = new Date(), limit = 100 }) {
-  const result = await db.query(
-    `SELECT id, zone_id, device_id, started_at, ended_at, reason, seconds_requested, seconds_actual
-     FROM irrigation_events
-     WHERE zone_id = $1
-       AND started_at <= $3
-       AND COALESCE(ended_at, now()) >= $2
-     ORDER BY started_at ASC
-     LIMIT $4`,
-    [zoneId, from, to, limit],
-  )
+export async function listIrrigationsInRange(
+  db,
+  { zoneId, ownershipId = null, from, to = new Date(), limit = 100 },
+) {
+  const result = ownershipId
+    ? await db.query(
+        `SELECT id, zone_id, device_id, started_at, ended_at, reason, seconds_requested, seconds_actual
+         FROM irrigation_events
+         WHERE zone_id = $1 AND ownership_id = $2
+           AND started_at <= $4
+           AND COALESCE(ended_at, now()) >= $3
+         ORDER BY started_at ASC
+         LIMIT $5`,
+        [zoneId, ownershipId, from, to, limit],
+      )
+    : await db.query(
+        `SELECT id, zone_id, device_id, started_at, ended_at, reason, seconds_requested, seconds_actual
+         FROM irrigation_events
+         WHERE zone_id = $1
+           AND started_at <= $3
+           AND COALESCE(ended_at, now()) >= $2
+         ORDER BY started_at ASC
+         LIMIT $4`,
+        [zoneId, from, to, limit],
+      )
   return result.rows
 }

@@ -25,6 +25,9 @@ export function testConfig(overrides = {}) {
     NODERED_COMMAND_URL: '',
     NODERED_TOKEN: '',
     NODERED_TIMEOUT_MS: 3000,
+    CLAIM_CODE_TTL_MINUTES: 10,
+    CLAIM_MAX_ATTEMPTS: 10,
+    CLAIM_WINDOW_MINUTES: 15,
     ...overrides,
   }
 }

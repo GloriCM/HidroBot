@@ -23,15 +23,16 @@ export async function insertAlert(db, {
   userId,
   zoneId = null,
   deviceId = null,
+  ownershipId = null,
   type,
   severity = 'warning',
   message,
 }) {
   const result = await db.query(
-    `INSERT INTO alerts (user_id, zone_id, device_id, type, severity, message)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, user_id, zone_id, device_id, type, severity, message, read_at, created_at`,
-    [userId, zoneId, deviceId, type, severity, message],
+    `INSERT INTO alerts (user_id, zone_id, device_id, ownership_id, type, severity, message)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, user_id, zone_id, device_id, ownership_id, type, severity, message, read_at, created_at`,
+    [userId, zoneId, deviceId, ownershipId, type, severity, message],
   )
   return result.rows[0]
 }

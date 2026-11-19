@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { AppError } from '../lib/errors.js'
+import * as deviceLinkService from '../services/deviceLinkService.js'
 import * as panelService from '../services/panelService.js'
 
 const settingsSchema = z.object({
@@ -56,14 +57,48 @@ export async function panelRoutes(app) {
     return { settings }
   })
 
-  app.post('/api/zones/:zoneId/devices', async (request, reply) => {
-    const parsed = deviceSchema.safeParse(request.body ?? {})
+  app.post('/api/zones/:zoneId/devices', async () => {
+    throw new AppError(410, 'Usa POST /api/devices/claim con el código del dispositivo', {
+      code: 'DEPRECATED',
+    })
+  })
+
+  app.get('/api/devices', async (request) => {
+    return deviceLinkService.listDevices(app, request.user.id)
+  })
+
+  app.post('/api/devices/claim', async (request, reply) => {
+    const schema = z.object({
+      code: z.string().min(5).max(16),
+      zoneId: z.string().uuid(),
+      name: z.string().min(1).max(80).optional(),
+    })
+    const parsed = schema.safeParse(request.body ?? {})
     if (!parsed.success) throw new AppError(400, 'Datos inválidos')
-    const created = await panelService.createDevice(app, request.user.id, request.params.zoneId, {
-      name: parsed.data.name || 'ESP32',
-      mqttId: parsed.data.mqttId,
+    const ip = request.ip || request.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    const created = await deviceLinkService.claimDevice(app, request.user.id, {
+      ...parsed.data,
+      ip,
     })
     return reply.code(201).send(created)
+  })
+
+  app.patch('/api/devices/:deviceId', async (request) => {
+    const schema = z.object({ name: z.string().min(1).max(80) })
+    const parsed = schema.safeParse(request.body ?? {})
+    if (!parsed.success) throw new AppError(400, 'Datos inválidos')
+    return deviceLinkService.patchDeviceForUser(app, request.user.id, request.params.deviceId, {
+      name: parsed.data.name,
+    })
+  })
+
+  app.post('/api/devices/:deviceId/unlink', async (request) => {
+    const schema = z.object({ keepHistory: z.boolean().optional().default(true) })
+    const parsed = schema.safeParse(request.body ?? {})
+    if (!parsed.success) throw new AppError(400, 'Datos inválidos')
+    return deviceLinkService.unlinkDevice(app, request.user.id, request.params.deviceId, {
+      keepHistory: parsed.data.keepHistory,
+    })
   })
 
   app.get('/api/devices/:deviceId/telemetry', async (request) => {
@@ -71,11 +106,14 @@ export async function panelRoutes(app) {
     if (!['1h', '6h', '12h', '24h'].includes(range)) {
       throw new AppError(400, 'range inválido')
     }
+    const ownershipId =
+      typeof request.query.ownershipId === 'string' ? request.query.ownershipId : null
     return panelService.getTelemetrySeries(
       app,
       request.user.id,
       request.params.deviceId,
       range,
+      ownershipId,
     )
   })
 

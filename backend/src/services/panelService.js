@@ -1,4 +1,3 @@
-import { randomToken, sha256 } from '../lib/crypto.js'
 import { AppError } from '../lib/errors.js'
 import { listAlertsForUser, markAlertRead } from '../repos/alerts.js'
 import { ensureCalibration, updateCalibration } from '../repos/calibration.js'
@@ -9,7 +8,6 @@ import {
   latestAckedIrrigation,
 } from '../repos/commands.js'
 import {
-  insertDevice,
   listAllDevices,
   listDevicesByZone,
   listStaleDevices,
@@ -17,7 +15,8 @@ import {
 } from '../repos/devices.js'
 import { listGardensByUser } from '../repos/gardens.js'
 import { listIrrigations, listIrrigationsInRange, openIrrigation } from '../repos/irrigations.js'
-import { getDeviceForUser, getZoneForUser } from '../repos/ownership.js'
+import { getActiveOwnership } from '../repos/deviceOwnerships.js'
+import { getDeviceAccessForUser, getDeviceForUser, getZoneForUser } from '../repos/ownership.js'
 import { deleteOldReadings } from '../repos/readings.js'
 import {
   deleteOldTelemetry,
@@ -198,8 +197,14 @@ function mapTelemetryPoint(row, { aggregated = false, intervalSeconds = null, ra
 /**
  * Asegura que el extremo derecho coincida con la última lectura cruda (tarjeta del panel).
  */
-async function withLatestRawPoint(app, deviceId, series, { aggregated, intervalSeconds }) {
-  const latest = await latestTelemetry(app.db, deviceId)
+async function withLatestRawPoint(
+  app,
+  deviceId,
+  series,
+  { aggregated, intervalSeconds },
+  ownershipId = null,
+) {
+  const latest = await latestTelemetry(app.db, deviceId, ownershipId)
   if (!latest) return series
   const point = mapTelemetryPoint(latest, {
     aggregated: false,
@@ -231,7 +236,10 @@ function mapIrrigationMarker(row) {
   }
 }
 
-async function buildTelemetrySeries(app, { deviceId, zoneId, range, now = new Date() }) {
+async function buildTelemetrySeries(
+  app,
+  { deviceId, zoneId, ownershipId = null, range, now = new Date() },
+) {
   const agg = rangeAggregation(range)
   const { from, to } = rangeWindow(range, now)
   const aggregated = Boolean(agg.binInterval)
@@ -239,23 +247,24 @@ async function buildTelemetrySeries(app, { deviceId, zoneId, range, now = new Da
   const rows = aggregated
     ? await listTelemetryAggregated(app.db, {
         deviceId,
+        ownershipId,
         from,
         to,
         binInterval: agg.binInterval,
       })
-    : await listTelemetry(app.db, { deviceId, from, to, limit: 2000 })
+    : await listTelemetry(app.db, { deviceId, ownershipId, from, to, limit: 2000 })
 
   let series = insertGapBreaks(
     rows.map((row) => mapTelemetryPoint(row, mapOpts)),
     agg.gapMs,
   )
-  series = await withLatestRawPoint(app, deviceId, series, mapOpts)
+  series = await withLatestRawPoint(app, deviceId, series, mapOpts, ownershipId)
 
   let irrigations = []
   if (zoneId) {
-    irrigations = (await listIrrigationsInRange(app.db, { zoneId, from, to })).map(
-      mapIrrigationMarker,
-    )
+    irrigations = (
+      await listIrrigationsInRange(app.db, { zoneId, ownershipId, from, to })
+    ).map(mapIrrigationMarker)
   }
   return {
     series,
@@ -368,11 +377,13 @@ export async function getPanelSummary(app, userId) {
   let online = false
   let calibration = null
   let onBattery = false
+  let ownership = null
 
   if (device) {
+    ownership = await getActiveOwnership(app.db, device.id)
     online = isDeviceOnline(device, app.config.DEVICE_OFFLINE_MINUTES)
     calibration = mapCalibration(await ensureCalibration(app.db, device.id))
-    const tele = await latestTelemetry(app.db, device.id)
+    const tele = await latestTelemetry(app.db, device.id, ownership?.id ?? null)
     if (tele) {
       latest = {
         humidity: num(tele.humidity_pct),
@@ -396,6 +407,7 @@ export async function getPanelSummary(app, userId) {
     const teleSeries = await buildTelemetrySeries(app, {
       deviceId: device.id,
       zoneId: zone.id,
+      ownershipId: ownership?.id ?? null,
       range: '24h',
     })
     series = teleSeries.series
@@ -405,7 +417,7 @@ export async function getPanelSummary(app, userId) {
     pump = pumpActive(device, open, lastAcked)
   }
 
-  const irrigations = await listIrrigations(app.db, zone.id, 20)
+  const irrigations = await listIrrigations(app.db, zone.id, 20, ownership?.id ?? null)
   const alerts = await listAlertsForUser(app.db, userId, 20)
 
   return {
@@ -453,12 +465,14 @@ export async function getPanelSummary(app, userId) {
   }
 }
 
-export async function getTelemetrySeries(app, userId, deviceId, range = '24h') {
-  const device = await getDeviceForUser(app.db, deviceId, userId)
-  if (!device) throw new AppError(404, 'Dispositivo no encontrado')
+export async function getTelemetrySeries(app, userId, deviceId, range = '24h', ownershipId = null) {
+  const access = await getDeviceAccessForUser(app.db, deviceId, userId, ownershipId)
+  if (!access) throw new AppError(404, 'Dispositivo no encontrado')
+  const resolvedDeviceId = access.device_id ?? access.id ?? deviceId
   return buildTelemetrySeries(app, {
-    deviceId: device.id,
-    zoneId: device.zone_id,
+    deviceId: resolvedDeviceId,
+    zoneId: access.zone_id,
+    ownershipId: access.ownership_id,
     range,
   })
 }
@@ -491,47 +505,10 @@ export async function patchDeviceCalibration(app, userId, deviceId, patch) {
   return mapCalibration(updated)
 }
 
-export async function createDevice(app, userId, zoneId, { name, mqttId } = {}) {
-  const zone = await getZoneForUser(app.db, zoneId, userId)
-  if (!zone) throw new AppError(404, 'Zona no encontrada')
-  const existing = await listDevicesByZone(app.db, zoneId)
-  if (existing.length > 0) {
-    throw new AppError(409, 'Esta zona ya tiene un dispositivo. Por ahora solo se admite uno.')
-  }
-
-  const apiKey = randomToken(24)
-  const finalMqttId =
-    (mqttId && String(mqttId).trim()) ||
-    `esp32-${randomToken(4).replace(/[^a-z0-9]/gi, '').slice(0, 8) || Date.now().toString(36)}`
-
-  let device
-  try {
-    device = await insertDevice(app.db, {
-      zoneId,
-      name: (name || 'ESP32').trim(),
-      apiKeyHash: sha256(apiKey),
-      mqttId: finalMqttId,
-    })
-  } catch (error) {
-    if (error?.code === '23505') {
-      throw new AppError(409, 'Ese mqtt_id ya está en uso.')
-    }
-    throw error
-  }
-
-  await ensureCalibration(app.db, device.id)
-  await pushConfig(app, device)
-
-  return {
-    device: {
-      id: device.id,
-      name: device.name,
-      mqttId: device.mqtt_id,
-      zoneId: device.zone_id,
-      createdAt: device.created_at,
-    },
-    apiKey,
-  }
+export async function createDevice() {
+  throw new AppError(410, 'Usa POST /api/devices/claim con el código del dispositivo', {
+    code: 'DEPRECATED',
+  })
 }
 
 export async function queueIrrigate(app, userId, zoneId, seconds) {

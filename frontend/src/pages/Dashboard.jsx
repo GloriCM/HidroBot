@@ -25,6 +25,7 @@ import { moistureState } from '../lib/moisture'
 
 const nav = [
   { id: 'inicio', label: 'Inicio', icon: Home },
+  { id: 'dispositivos', label: 'Mis dispositivos', icon: Settings },
   { id: 'historial', label: 'Historial', icon: ChartColumn },
   { id: 'sistema', label: 'Configuración', icon: Settings },
   { id: 'alertas', label: 'Alertas', icon: Bell },
@@ -193,8 +194,9 @@ export default function Dashboard() {
   const [actionError, setActionError] = useState('')
   const [actionNote, setActionNote] = useState('')
   const [busy, setBusy] = useState(false)
-  const [newApiKey, setNewApiKey] = useState('')
-  const [mqttIdDraft, setMqttIdDraft] = useState('esp32-1')
+  const [devicesList, setDevicesList] = useState({ devices: [], previous: [] })
+  const [claimCode, setClaimCode] = useState('')
+  const [claimName, setClaimName] = useState('Mi HidroBot')
   const [menu, setMenu] = useState(false)
   const [photo, setPhoto] = useState(() => readPhoto(user?.email))
   const [draft, setDraft] = useState(() => ({
@@ -285,6 +287,11 @@ export default function Dashboard() {
   }, [ready, user, loadSummary, loadSeries, range])
 
   // Al abrir Configuración, recarga el formulario solo si no hay cambios pendientes.
+  useEffect(() => {
+    if (section !== 'dispositivos') return
+    void loadDevices()
+  }, [section])
+
   useEffect(() => {
     if (section !== 'sistema') return
     if (settingsDirtyRef.current || calDirtyRef.current) return
@@ -549,21 +556,46 @@ export default function Dashboard() {
     }
   }
 
-  async function createDevice() {
+  async function loadDevices() {
+    try {
+      const data = await api.listDevices()
+      setDevicesList(data)
+    } catch (err) {
+      setActionError(err.message)
+    }
+  }
+
+  async function claimDevice() {
     if (!summary.zone?.id || busy) return
     setBusy(true)
     setActionError('')
-    setNewApiKey('')
     try {
-      const created = await api.createDevice(summary.zone.id, {
-        name: 'ESP32',
-        mqttId: mqttIdDraft.trim() || undefined,
+      await api.claimDevice({
+        code: claimCode.trim(),
+        zoneId: summary.zone.id,
+        name: claimName.trim() || 'Mi HidroBot',
       })
-      setNewApiKey(created.apiKey)
-      setActionNote(
-        `Dispositivo ${created.device.mqttId} creado. Añade la clave en DEVICE_API_KEYS de Node-RED.`,
-      )
+      setActionNote('Dispositivo vinculado correctamente.')
+      setClaimCode('')
       await loadSummary({ syncForms: true })
+      await loadDevices()
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function unlinkDevice(deviceId) {
+    const keep = window.confirm(
+      '¿Conservar el historial de este periodo en "Dispositivos anteriores"? Pulsa Cancelar para borrarlo.',
+    )
+    setBusy(true)
+    try {
+      await api.unlinkDevice(deviceId, { keepHistory: keep })
+      setActionNote(keep ? 'Dispositivo desvinculado. Historial conservado.' : 'Dispositivo desvinculado. Historial borrado.')
+      await loadSummary({ syncForms: true })
+      await loadDevices()
     } catch (err) {
       setActionError(err.message)
     } finally {
@@ -756,6 +788,74 @@ export default function Dashboard() {
               </section>
 
               <section className="grid gap-3 lg:grid-cols-[1.4fr_0.7fr]">
+                {show('dispositivos') && (
+                  <article className={`${glass} p-4`}>
+                    <h2 className="mb-3 font-extrabold">Mis dispositivos</h2>
+                    {devicesList.devices?.length ? (
+                      <ul className="mb-4 grid gap-2 text-sm">
+                        {devicesList.devices.map((d) => (
+                          <li key={d.id} className="rounded-xl border border-[#d7e3ee] bg-white/80 p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <p className="font-extrabold">{d.name}</p>
+                                <p className="text-[#6b8494]">{d.zoneName} · {d.mqttId}</p>
+                                <p className="text-xs">
+                                  FW {d.firmwareVersion || '—'} · {d.online ? 'En línea' : 'Sin conexión'}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                className="rounded-full border border-[#d7e3ee] px-3 py-1 text-xs font-bold"
+                                disabled={busy}
+                                onClick={() => { void unlinkDevice(d.id) }}
+                              >
+                                Desvincular
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mb-3 text-sm font-semibold text-[#0a3d6b]">No tienes dispositivos activos.</p>
+                    )}
+                    {summary.zone && !summary.device ? (
+                      <div className="grid gap-2 border-t border-[#e7eef3] pt-3">
+                        <p className="text-sm font-bold text-[#0a3d6b]">Añadir dispositivo (zona: {summary.zone.name})</p>
+                        <input
+                          className="h-11 rounded-xl border border-[#d7e3ee] bg-white px-3 font-mono text-lg tracking-widest"
+                          placeholder="XXX-XXX"
+                          value={claimCode}
+                          onChange={(e) => setClaimCode(e.target.value)}
+                        />
+                        <input
+                          className="h-11 rounded-xl border border-[#d7e3ee] bg-white px-3"
+                          placeholder="Nombre"
+                          value={claimName}
+                          onChange={(e) => setClaimName(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="h-11 rounded-xl bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] font-extrabold text-white"
+                          disabled={busy}
+                          onClick={() => { void claimDevice() }}
+                        >
+                          Reclamar con código
+                        </button>
+                      </div>
+                    ) : null}
+                    {devicesList.previous?.length ? (
+                      <div className="mt-4 border-t border-[#e7eef3] pt-3">
+                        <h3 className="mb-2 text-sm font-extrabold">Dispositivos anteriores</h3>
+                        <ul className="text-xs text-[#6b8494]">
+                          {devicesList.previous.map((p) => (
+                            <li key={p.ownershipId}>{p.name} · {p.zoneName}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </article>
+                )}
+
                 {show('historial') && (
                   <article className={`${glass} p-4`}>
                     <header className="mb-2 flex items-center justify-between">
@@ -796,15 +896,9 @@ export default function Dashboard() {
                       ) : null}
                     </header>
                     {!summary.device && summary.zone ? (
-                      <div className="grid gap-2">
-                        <label className="block text-sm font-bold text-[#0a3d6b]">
-                          mqtt_id
-                          <input className="mt-1 h-11 w-full rounded-xl border border-[#d7e3ee] bg-white px-3" value={mqttIdDraft} onChange={(e) => setMqttIdDraft(e.target.value)} placeholder="esp32-1" />
-                        </label>
-                        <button className="h-11 rounded-xl bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] font-extrabold text-white" type="button" disabled={busy} onClick={() => { void createDevice() }}>
-                          Vincular ESP32
-                        </button>
-                      </div>
+                      <p className="text-sm font-semibold text-[#0a3d6b]">
+                        No hay dispositivo en esta zona. Añádelo en <strong>Mis dispositivos</strong> con el código de la pantalla del ESP32.
+                      </p>
                     ) : (
                       <>
                         <form className="grid gap-2" onSubmit={saveSettings}>
@@ -871,11 +965,6 @@ export default function Dashboard() {
                           <button className="h-11 rounded-xl border border-[#d7e3ee] bg-white font-extrabold text-[#0a3d6b]" type="submit" disabled={busy}>Guardar calibración</button>
                         </form>
                       </>
-                    )}
-                    {newApiKey && (
-                      <p className="mt-3 break-all rounded-xl bg-[#f4f8fb] p-3 text-xs font-semibold text-[#0a3d6b]">
-                        Clave (DEVICE_API_KEYS): <code>{newApiKey}</code>
-                      </p>
                     )}
                     {actionError && <p className="mt-3 text-sm font-bold text-[#b42318]">{actionError}</p>}
                     {actionNote && <p className="mt-3 text-sm font-bold text-[#0f6b32]">{actionNote}</p>}

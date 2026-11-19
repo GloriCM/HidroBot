@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
-import { sha256 } from '../src/lib/crypto.js'
+import { generateClaimCode } from '../src/lib/claimCode.js'
+import { mqttIdFromMac } from '../src/lib/deviceIdentity.js'
+import { insertClaimCode } from '../src/repos/claimCodes.js'
 import { createTestApp, hasDatabaseUrl, resetAuthTables, shutdownTestApp } from './helpers.js'
 
 const run = hasDatabaseUrl() ? describe : describe.skip
 
+const MAC = '11:22:33:44:55:66'
+const MQTT_ID = mqttIdFromMac(MAC)
+
 run('ingest API', () => {
   /** @type {import('fastify').FastifyInstance} */
   let app
-  /** @type {ReturnType<import('./helpers.js').testConfig>} */
   let config
-  let deviceId = ''
-  let mqttId = ''
-  const deviceKey = 'test-device-key-abcdefghijklmnopqrstuvwxyz'
+  let mqttId = MQTT_ID
 
   before(async () => {
     ;({ app, config } = await createTestApp())
@@ -30,29 +32,40 @@ run('ingest API', () => {
     })
     assert.equal(register.statusCode, 201)
     const cookie = register.cookies.find((item) => item.name === config.COOKIE_NAME)
+    assert.ok(cookie?.value, 'cookie de sesión tras registro')
+    const userId = register.json().user.id
 
-    const summary = await app.inject({
-      method: 'GET',
-      url: '/api/panel/summary',
-      cookies: { [config.COOKIE_NAME]: cookie.value },
-    })
-    assert.equal(summary.statusCode, 200)
-    const zoneId = summary.json().zone.id
-
-    const created = await app.inject({
+    await app.inject({
       method: 'POST',
-      url: `/api/zones/${zoneId}/devices`,
-      cookies: { [config.COOKIE_NAME]: cookie.value },
-      payload: { name: 'ESP32 test', mqttId: 'esp32-test' },
+      url: '/api/ingest/hola',
+      headers: { 'x-ingest-token': config.INGEST_TOKEN },
+      payload: { mqttId: MQTT_ID, mac: MAC, version_firmware: '1.0.0' },
     })
-    assert.equal(created.statusCode, 201)
-    deviceId = created.json().device.id
-    mqttId = created.json().device.mqttId
 
-    await app.db.query('UPDATE devices SET api_key_hash = $2 WHERE id = $1', [
-      deviceId,
-      sha256(deviceKey),
-    ])
+    const zoneRow = await app.db.query(
+      `SELECT z.id FROM zones z
+       INNER JOIN gardens g ON g.id = z.garden_id
+       WHERE g.user_id = $1
+       ORDER BY z.created_at
+       LIMIT 1`,
+      [userId],
+    )
+    assert.ok(zoneRow.rows[0], 'zona del usuario')
+    const zoneId = zoneRow.rows[0].id
+    const dev = await app.db.query(`SELECT id FROM devices WHERE mqtt_id = $1`, [MQTT_ID])
+    const code = generateClaimCode()
+    await insertClaimCode(app.db, {
+      deviceId: dev.rows[0].id,
+      codeHash: code.hash,
+      expiresAt: new Date(Date.now() + 600_000),
+    })
+    await app.inject({
+      method: 'POST',
+      url: '/api/devices/claim',
+      cookies: { [config.COOKIE_NAME]: cookie.value },
+      payload: { code: code.plain, zoneId, name: 'ESP32 test' },
+    })
+    mqttId = MQTT_ID
   })
 
   after(async () => {
@@ -63,11 +76,8 @@ run('ingest API', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/ingest/readings',
-      headers: {
-        'x-ingest-token': config.INGEST_TOKEN,
-        'x-device-key': deviceKey,
-      },
-      payload: { deviceId, humidity: 40 },
+      headers: { 'x-ingest-token': config.INGEST_TOKEN },
+      payload: { deviceId: '00000000-0000-4000-8000-000000000000', humidity: 40 },
     })
     assert.equal(response.statusCode, 410)
   })
@@ -76,10 +86,7 @@ run('ingest API', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/ingest/telemetry',
-      headers: {
-        'x-ingest-token': config.INGEST_TOKEN,
-        'x-device-key': deviceKey,
-      },
+      headers: { 'x-ingest-token': config.INGEST_TOKEN },
       payload: {
         mqttId,
         humedad_raw: 2800,

@@ -65,8 +65,13 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
-  createDevice: (zoneId, body = {}) =>
-    request(`/api/zones/${zoneId}/devices`, { method: 'POST', body: JSON.stringify(body) }),
+  listDevices: () => request('/api/devices'),
+  claimDevice: (body) =>
+    request('/api/devices/claim', { method: 'POST', body: JSON.stringify(body) }),
+  patchDevice: (deviceId, body) =>
+    request(`/api/devices/${deviceId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  unlinkDevice: (deviceId, body = {}) =>
+    request(`/api/devices/${deviceId}/unlink`, { method: 'POST', body: JSON.stringify(body) }),
   irrigate: (zoneId, body = {}) =>
     request(`/api/zones/${zoneId}/commands/irrigate`, {
       method: 'POST',

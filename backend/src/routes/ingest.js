@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { AppError } from '../lib/errors.js'
+import { ingestHola } from '../services/deviceLinkService.js'
 import * as ingestService from '../services/ingestService.js'
 
 const deviceRef = {
@@ -48,19 +49,17 @@ const eventSchema = z
     message: 'deviceId o mqttId requerido',
   })
 
+const holaSchema = z.object({
+  mqttId: z.string().min(1).max(64),
+  mac: z.string().min(1).max(32),
+  version_firmware: z.string().min(1).max(32).optional(),
+})
+
 function requireIngestToken(request, config) {
   const token = request.headers['x-ingest-token']
   if (typeof token !== 'string' || token !== config.INGEST_TOKEN) {
     throw new AppError(401, 'Token de ingesta inválido')
   }
-}
-
-function requireDeviceKey(request) {
-  const key = request.headers['x-device-key']
-  if (typeof key !== 'string' || !key.trim()) {
-    throw new AppError(401, 'Falta X-Device-Key')
-  }
-  return key.trim()
 }
 
 function readPathValue(body, path) {
@@ -93,51 +92,59 @@ function throwValidationError(app, route, body, zodError) {
  * @param {import('fastify').FastifyInstance} app
  */
 export async function ingestRoutes(app) {
+  app.post('/api/ingest/hola', async (request) => {
+    requireIngestToken(request, app.config)
+    const parsed = holaSchema.safeParse(request.body ?? {})
+    if (!parsed.success) {
+      throwValidationError(app, 'POST /api/ingest/hola', request.body, parsed.error)
+    }
+    return ingestHola(app, {
+      mqttId: parsed.data.mqttId,
+      mac: parsed.data.mac,
+      versionFirmware: parsed.data.version_firmware ?? null,
+    })
+  })
+
   app.post('/api/ingest/telemetry', async (request) => {
     requireIngestToken(request, app.config)
-    const deviceKey = requireDeviceKey(request)
     const parsed = telemetrySchema.safeParse(request.body)
     if (!parsed.success) {
       throwValidationError(app, 'POST /api/ingest/telemetry', request.body, parsed.error)
     }
-    return ingestService.ingestTelemetry(app, { ...parsed.data, deviceKey })
+    return ingestService.ingestTelemetry(app, parsed.data)
   })
 
   app.post('/api/ingest/status', async (request) => {
     requireIngestToken(request, app.config)
-    const deviceKey = requireDeviceKey(request)
     const parsed = statusSchema.safeParse(request.body)
     if (!parsed.success) {
       throwValidationError(app, 'POST /api/ingest/status', request.body, parsed.error)
     }
-    return ingestService.ingestStatus(app, { ...parsed.data, deviceKey })
+    return ingestService.ingestStatus(app, parsed.data)
   })
 
   app.post('/api/ingest/event', async (request) => {
     requireIngestToken(request, app.config)
-    const deviceKey = requireDeviceKey(request)
     const parsed = eventSchema.safeParse(request.body)
     if (!parsed.success) {
       throwValidationError(app, 'POST /api/ingest/event', request.body, parsed.error)
     }
-    return ingestService.ingestEvent(app, { ...parsed.data, deviceKey })
+    return ingestService.ingestEvent(app, parsed.data)
   })
 
   app.get('/api/ingest/config/:deviceId', async (request) => {
     requireIngestToken(request, app.config)
-    const deviceKey = requireDeviceKey(request)
     const deviceId = request.params.deviceId
     const asUuid = z.string().uuid().safeParse(deviceId)
     if (asUuid.success) {
-      return ingestService.getIngestConfig(app, { deviceId, deviceKey })
+      return ingestService.getIngestConfig(app, { deviceId })
     }
-    return ingestService.getIngestConfig(app, { mqttId: deviceId, deviceKey })
+    return ingestService.getIngestConfig(app, { mqttId: deviceId })
   })
 
   /** ESP32 → Node-RED (config/solicitar) → API: publica config MQTT sin retain. */
   app.post('/api/ingest/config/request', async (request) => {
     requireIngestToken(request, app.config)
-    const deviceKey = requireDeviceKey(request)
     const parsed = z
       .object({
         deviceId: z.string().uuid().optional(),
@@ -150,7 +157,7 @@ export async function ingestRoutes(app) {
     if (!parsed.success) {
       throwValidationError(app, 'POST /api/ingest/config/request', request.body, parsed.error)
     }
-    return ingestService.requestConfigPush(app, { ...parsed.data, deviceKey })
+    return ingestService.requestConfigPush(app, parsed.data)
   })
 
   app.post('/api/ingest/readings', async () => {

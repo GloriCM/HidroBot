@@ -4,9 +4,9 @@ import {
   roundPct,
   tankPctFromDistance,
 } from '../lib/calibration.js'
-import { sha256Equal } from '../lib/crypto.js'
 import { AppError } from '../lib/errors.js'
 import { ensureCalibration, getCalibration } from '../repos/calibration.js'
+import { getActiveOwnership } from '../repos/deviceOwnerships.js'
 import {
   findDeviceById,
   findDeviceByMqttId,
@@ -20,15 +20,26 @@ import { raiseAlert } from './alertService.js'
 import { decideIrrigation } from './irrigationDecision.js'
 import { publishDeviceConfig } from './panelService.js'
 
-async function resolveDevice(app, { deviceId, mqttId, deviceKey }) {
+async function resolveDevice(app, { deviceId, mqttId }) {
   let device = null
   if (deviceId) device = await findDeviceById(app.db, deviceId)
   else if (mqttId) device = await findDeviceByMqttId(app.db, mqttId)
   if (!device) throw new AppError(404, 'Dispositivo no encontrado')
-  if (!sha256Equal(deviceKey, device.api_key_hash)) {
-    throw new AppError(401, 'Clave de dispositivo inválida')
-  }
   return device
+}
+
+async function resolveClaimedContext(app, device) {
+  if (device.ownership_status !== 'claimed' || !device.zone_id) {
+    return null
+  }
+  const ownership = await getActiveOwnership(app.db, device.id)
+  if (!ownership) return null
+  return {
+    ...device,
+    zone_id: ownership.zone_id,
+    user_id: ownership.user_id,
+    ownership_id: ownership.id,
+  }
 }
 
 function mapConfig(settings, calibration, device) {
@@ -55,8 +66,24 @@ function mapConfig(settings, calibration, device) {
 
 export async function ingestTelemetry(app, input) {
   const device = await resolveDevice(app, input)
-  const prevSource = device.last_source
-  const calibration = (await getCalibration(app.db, device.id)) || (await ensureCalibration(app.db, device.id))
+  const ctx = await resolveClaimedContext(app, device)
+  if (!ctx) {
+    await updateDeviceRuntime(app.db, device.id, {
+      online: true,
+      lastSeenAt: new Date(),
+    })
+    await touchDeviceSeen(app.db, device.id, new Date())
+    return {
+      ok: true,
+      discarded: true,
+      regar: false,
+      segundos: 0,
+      motivo: 'sin_dueño',
+    }
+  }
+
+  const prevSource = ctx.last_source
+  const calibration = (await getCalibration(app.db, ctx.id)) || (await ensureCalibration(app.db, ctx.id))
 
   const humidityRaw = Number(input.humedad_raw)
   const hasDistance =
@@ -84,7 +111,8 @@ export async function ingestTelemetry(app, input) {
   }
 
   const row = await insertTelemetry(app.db, {
-    deviceId: device.id,
+    deviceId: ctx.id,
+    ownershipId: ctx.ownership_id,
     humidityRaw,
     humidityPct,
     distanceCm,
@@ -98,81 +126,87 @@ export async function ingestTelemetry(app, input) {
     recordedAt,
   })
 
-  await updateDeviceRuntime(app.db, device.id, {
+  await updateDeviceRuntime(app.db, ctx.id, {
     online: true,
     source,
     pump,
     lastSeenAt: row.recorded_at,
   })
-  await touchDeviceSeen(app.db, device.id, row.recorded_at)
+  await touchDeviceSeen(app.db, ctx.id, row.recorded_at)
 
-  const settings = await getZoneSettings(app.db, device.zone_id)
+  const settings = await getZoneSettings(app.db, ctx.zone_id)
   const tankMin = Number(settings?.tank_min_pct ?? 10)
   const batteryMin = Number(settings?.battery_min_pct ?? 30)
   const threshold = Number(settings?.threshold_pct ?? 35)
 
   if (prevSource === 'red' && source === 'bateria') {
     await raiseAlert(app, {
-      userId: device.user_id,
-      zoneId: device.zone_id,
-      deviceId: device.id,
+      userId: ctx.user_id,
+      zoneId: ctx.zone_id,
+      deviceId: ctx.id,
+      ownershipId: ctx.ownership_id,
       type: 'power_cut',
       severity: 'warning',
-      message: `Corte de red: ${device.name} pasó a batería.`,
+      message: `Corte de red: ${ctx.name} pasó a batería.`,
     })
   }
   if (prevSource === 'bateria' && source === 'red') {
     await raiseAlert(app, {
-      userId: device.user_id,
-      zoneId: device.zone_id,
-      deviceId: device.id,
+      userId: ctx.user_id,
+      zoneId: ctx.zone_id,
+      deviceId: ctx.id,
+      ownershipId: ctx.ownership_id,
       type: 'power_restored',
       severity: 'info',
-      message: `Red restablecida en ${device.name}.`,
+      message: `Red restablecida en ${ctx.name}.`,
     })
   }
   if (source === 'bateria' && batteryPct < batteryMin) {
     await raiseAlert(app, {
-      userId: device.user_id,
-      zoneId: device.zone_id,
-      deviceId: device.id,
+      userId: ctx.user_id,
+      zoneId: ctx.zone_id,
+      deviceId: ctx.id,
+      ownershipId: ctx.ownership_id,
       type: 'battery_low',
       severity: 'warning',
-      message: `Batería baja (${batteryPct}%) en ${device.name}.`,
+      message: `Batería baja (${batteryPct}%) en ${ctx.name}.`,
     })
   }
   if (!hasDistance) {
     await raiseAlert(app, {
-      userId: device.user_id,
-      zoneId: device.zone_id,
-      deviceId: device.id,
+      userId: ctx.user_id,
+      zoneId: ctx.zone_id,
+      deviceId: ctx.id,
+      ownershipId: ctx.ownership_id,
       type: 'sensor_tanque_sin_lectura',
       severity: 'warning',
-      message: `Sensor de tanque sin lectura en ${device.name}.`,
+      message: `Sensor de tanque sin lectura en ${ctx.name}.`,
     })
   } else if (tankPct < tankMin) {
     await raiseAlert(app, {
-      userId: device.user_id,
-      zoneId: device.zone_id,
-      deviceId: device.id,
+      userId: ctx.user_id,
+      zoneId: ctx.zone_id,
+      deviceId: ctx.id,
+      ownershipId: ctx.ownership_id,
       type: 'tank_low',
       severity: 'warning',
-      message: `Tanque bajo (${tankPct}%) en ${device.name}.`,
+      message: `Tanque bajo (${tankPct}%) en ${ctx.name}.`,
     })
   }
   if (humidityPct < threshold) {
     await raiseAlert(app, {
-      userId: device.user_id,
-      zoneId: device.zone_id,
-      deviceId: device.id,
+      userId: ctx.user_id,
+      zoneId: ctx.zone_id,
+      deviceId: ctx.id,
+      ownershipId: ctx.ownership_id,
       type: 'dry_persistent',
       severity: 'warning',
-      message: `Humedad baja (${humidityPct}%) en ${device.name}.`,
+      message: `Humedad baja (${humidityPct}%) en ${ctx.name}.`,
     })
   }
 
   const decision = await decideIrrigation(app.db, {
-    device,
+    device: ctx,
     humidityPct,
     tankPct,
     batteryPct,
@@ -200,14 +234,16 @@ export async function ingestStatus(app, input) {
     online,
     lastSeenAt: online ? new Date() : undefined,
   })
-  if (!online) {
+  const ctx = await resolveClaimedContext(app, device)
+  if (!online && ctx) {
     await raiseAlert(app, {
-      userId: device.user_id,
-      zoneId: device.zone_id,
-      deviceId: device.id,
+      userId: ctx.user_id,
+      zoneId: ctx.zone_id,
+      deviceId: ctx.id,
+      ownershipId: ctx.ownership_id,
       type: 'device_offline',
       severity: 'warning',
-      message: `El dispositivo ${device.name} está offline (MQTT).`,
+      message: `El dispositivo ${ctx.name} está offline (MQTT).`,
     })
   }
   return { ok: true, online }
@@ -215,34 +251,40 @@ export async function ingestStatus(app, input) {
 
 export async function ingestEvent(app, input) {
   const device = await resolveDevice(app, input)
+  const ctx = await resolveClaimedContext(app, device)
+  if (!ctx) {
+    return { ok: true, discarded: true }
+  }
   const tipo = input.tipo
 
   if (tipo === 'riego_inicio') {
-    const open = await openIrrigation(app.db, device.zone_id)
+    const open = await openIrrigation(app.db, ctx.zone_id)
     if (!open) {
       await insertIrrigationEvent(app.db, {
-        zoneId: device.zone_id,
-        deviceId: device.id,
+        zoneId: ctx.zone_id,
+        deviceId: ctx.id,
+        ownershipId: ctx.ownership_id,
         reason: 'manual',
         secondsRequested: input.segundos ?? null,
       })
     }
-    await updateDeviceRuntime(app.db, device.id, { pump: true })
+    await updateDeviceRuntime(app.db, ctx.id, { pump: true })
   } else if (tipo === 'riego_fin') {
-    await closeOpenIrrigation(app.db, device.zone_id, {
+    await closeOpenIrrigation(app.db, ctx.zone_id, {
       secondsActual: input.segundos ?? null,
     })
-    await updateDeviceRuntime(app.db, device.id, { pump: false })
+    await updateDeviceRuntime(app.db, ctx.id, { pump: false })
   } else if (tipo === 'bloqueo_tanque_vacio') {
     await raiseAlert(app, {
-      userId: device.user_id,
-      zoneId: device.zone_id,
-      deviceId: device.id,
+      userId: ctx.user_id,
+      zoneId: ctx.zone_id,
+      deviceId: ctx.id,
+      ownershipId: ctx.ownership_id,
       type: 'tank_empty',
       severity: 'critical',
-      message: `Tanque vacío: riego bloqueado en ${device.name}.`,
+      message: `Tanque vacío: riego bloqueado en ${ctx.name}.`,
     })
-    await updateDeviceRuntime(app.db, device.id, { pump: false })
+    await updateDeviceRuntime(app.db, ctx.id, { pump: false })
   } else {
     throw new AppError(400, 'tipo de evento inválido')
   }
@@ -250,20 +292,26 @@ export async function ingestEvent(app, input) {
   return { ok: true }
 }
 
-export async function getIngestConfig(app, { deviceId, mqttId, deviceKey }) {
-  const device = await resolveDevice(app, { deviceId, mqttId, deviceKey })
-  const settings = await getZoneSettings(app.db, device.zone_id)
-  const calibration = (await getCalibration(app.db, device.id)) || (await ensureCalibration(app.db, device.id))
-  return mapConfig(settings, calibration, device)
+export async function getIngestConfig(app, { deviceId, mqttId }) {
+  const device = await resolveDevice(app, { deviceId, mqttId })
+  const ctx = await resolveClaimedContext(app, device)
+  if (!ctx) throw new AppError(403, 'Dispositivo sin dueño')
+  const settings = await getZoneSettings(app.db, ctx.zone_id)
+  const calibration = (await getCalibration(app.db, ctx.id)) || (await ensureCalibration(app.db, ctx.id))
+  return mapConfig(settings, calibration, ctx)
 }
 
 /**
  * El ESP32 pide config tras conectar (MQTT config/solicitar → Node-RED → aquí).
  * La API responde publicando hidrobot/<id>/config sin retain.
  */
-export async function requestConfigPush(app, { deviceId, mqttId, deviceKey }) {
-  const device = await resolveDevice(app, { deviceId, mqttId, deviceKey })
-  const push = await publishDeviceConfig(app, device)
+export async function requestConfigPush(app, { deviceId, mqttId }) {
+  const device = await resolveDevice(app, { deviceId, mqttId })
+  const ctx = await resolveClaimedContext(app, device)
+  if (!ctx) {
+    return { ok: false, mqttId: device.mqtt_id, pushed: false, reason: 'unclaimed' }
+  }
+  const push = await publishDeviceConfig(app, ctx)
   return {
     ok: Boolean(push?.ok),
     mqttId: device.mqtt_id,

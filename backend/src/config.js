@@ -25,6 +25,9 @@ const schema = z.object({
   NODERED_COMMAND_URL: z.string().optional().default(''),
   NODERED_TOKEN: z.string().optional().default(''),
   NODERED_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
+  CLAIM_CODE_TTL_MINUTES: z.coerce.number().int().positive().default(10),
+  CLAIM_MAX_ATTEMPTS: z.coerce.number().int().positive().default(10),
+  CLAIM_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
 })
 
 export function loadConfig(env = process.env) {

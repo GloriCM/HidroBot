@@ -33,7 +33,7 @@ const char* MQTT_HOST = "mqtt.jelabs.net";
 const uint16_t MQTT_PORT = 443;
 const char* MQTT_PATH = "/mqtt";
 const char* MQTT_USER = "esp32";
-const char* DEVICE_ID = "esp32-1";
+const char* FIRMWARE_VERSION = "1.1.0";
 
 // ===================== 3. PINES (segun el diagrama) =====================
 const int PIN_V_RED = 36;      // divisor 100k/22k de la red
@@ -72,8 +72,17 @@ Adafruit_SSD1306 pantalla(128, 64, &Wire, -1);
 Preferences prefs;
 bool hayPantalla = false;
 
+String deviceMqttId;
 String TOPIC_TELEMETRIA, TOPIC_ESTADO, TOPIC_EVENTO, TOPIC_COMANDO, TOPIC_CONFIG,
-       TOPIC_CONFIG_SOLICITAR;
+       TOPIC_CONFIG_SOLICITAR, TOPIC_HOLA, TOPIC_VINCULACION;
+
+bool vinculado = false;
+String nombreDispositivo = "HidroBot";
+String codigoVinculacion = "";
+unsigned long codigoExpiraMs = 0;
+unsigned long nombreMostradoHastaMs = 0;
+
+String vinculacionPendiente = "";
 
 bool bombaEncendida = false;
 unsigned long bombaInicioMs = 0;
@@ -112,6 +121,61 @@ int sueloRawSeco = SUELO_RAW_SECO_DEF;
 int sueloRawMojado = SUELO_RAW_MOJADO_DEF;
 float distanciaLlenoCm = TANQUE_LLENO_CM_DEF;
 float distanciaVacioCm = TANQUE_VACIO_CM_DEF;
+
+String macLegible() {
+  return WiFi.macAddress();
+}
+
+String mqttIdDesdeMac() {
+  String mac = WiFi.macAddress();
+  mac.toLowerCase();
+  String hex;
+  for (unsigned i = 0; i < mac.length(); i++) {
+    char c = mac.charAt(i);
+    if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) hex += c;
+  }
+  if (hex.length() < 6) return "hb-000000";
+  return String("hb-") + hex.substring(hex.length() - 6);
+}
+
+void cargarVinculacionNvs() {
+  prefs.begin("hidrobot", true);
+  vinculado = prefs.getBool("vinculado", false);
+  nombreDispositivo = prefs.getString("dev_nombre", "HidroBot");
+  codigoVinculacion = prefs.getString("vinc_codigo", "");
+  codigoExpiraMs = 0;
+  prefs.end();
+}
+
+void guardarVinculacionNvs() {
+  prefs.begin("hidrobot", false);
+  prefs.putBool("vinculado", vinculado);
+  prefs.putString("dev_nombre", nombreDispositivo);
+  prefs.putString("vinc_codigo", codigoVinculacion);
+  prefs.putULong("vinc_expira", codigoExpiraMs);
+  prefs.end();
+}
+
+void borrarNvsUsuario() {
+  prefs.begin("hidrobot", false);
+  prefs.remove("vinculado");
+  prefs.remove("dev_nombre");
+  prefs.remove("vinc_codigo");
+  prefs.remove("vinc_expira");
+  prefs.remove("suelo_seco");
+  prefs.remove("suelo_mojado");
+  prefs.remove("dist_lleno");
+  prefs.remove("dist_vacio");
+  prefs.end();
+  vinculado = false;
+  nombreDispositivo = "HidroBot";
+  codigoVinculacion = "";
+  codigoExpiraMs = 0;
+  sueloRawSeco = SUELO_RAW_SECO_DEF;
+  sueloRawMojado = SUELO_RAW_MOJADO_DEF;
+  distanciaLlenoCm = TANQUE_LLENO_CM_DEF;
+  distanciaVacioCm = TANQUE_VACIO_CM_DEF;
+}
 
 void cargarCalibracionNvs() {
   prefs.begin("hidrobot", true);
@@ -156,7 +220,7 @@ void mostrarMensaje(const char* texto) {
   pantalla.display();
 }
 
-void actualizarPantalla() {
+void actualizarPantallaSensores() {
   if (!hayPantalla) return;
   float pct = humedadPctDesdeRaw(sueloRaw);
   pantalla.clearDisplay();
@@ -185,6 +249,40 @@ void actualizarPantalla() {
     }
   }
   pantalla.display();
+}
+
+void actualizarPantalla() {
+  if (!hayPantalla) return;
+  if (vinculado && nombreMostradoHastaMs > millis()) {
+    pantalla.clearDisplay();
+    pantalla.setTextColor(SSD1306_WHITE);
+    pantalla.setCursor(0, 0);
+    pantalla.setTextSize(2);
+    pantalla.println(nombreDispositivo.substring(0, 10));
+    pantalla.setTextSize(1);
+    pantalla.println("Vinculado");
+    pantalla.display();
+    return;
+  }
+  if (!vinculado) {
+    pantalla.clearDisplay();
+    pantalla.setTextColor(SSD1306_WHITE);
+    pantalla.setCursor(0, 0);
+    pantalla.setTextSize(1);
+    pantalla.println("Vincula tu");
+    pantalla.println("HidroBot");
+    pantalla.setTextSize(2);
+    pantalla.println(codigoVinculacion.length() ? codigoVinculacion : "------");
+    pantalla.setTextSize(1);
+    pantalla.println("hidrobot.jelabs.net");
+    if (codigoExpiraMs > millis()) {
+      unsigned long rest = (codigoExpiraMs - millis()) / 1000UL;
+      pantalla.printf("Quedan %lum %lus\n", rest / 60, rest % 60);
+    }
+    pantalla.display();
+    return;
+  }
+  actualizarPantallaSensores();
 }
 
 // ===================== SENSORES =====================
@@ -254,6 +352,7 @@ void publicarEvento(const char* tipo, unsigned long segundos) {
 }
 
 void enviarTelemetria() {
+  if (!vinculado) return;
   JsonDocument doc;
   doc["humedad_raw"] = sueloRaw;
   if (distanciaCm >= 0) doc["distancia_cm"] = roundf(distanciaCm * 10) / 10.0;
@@ -284,6 +383,7 @@ void apagarBomba(const char* motivo) {
 }
 
 void encenderBomba(unsigned long segundos) {
+  if (!vinculado) return;
   if (distanciaCm < 0 || distanciaCm >= distanciaVacioCm) {
     Serial.println("Riego bloqueado: tanque vacio o sin lectura del nivel");
     publicarEvento("bloqueo_tanque_vacio", 0);
@@ -306,6 +406,41 @@ void alRecibirComando(const String& payload, const size_t size) {
 
 void alRecibirConfig(const String& payload, const size_t size) {
   configPendiente = payload;
+}
+
+void alRecibirVinculacion(const String& payload, const size_t size) {
+  vinculacionPendiente = payload;
+}
+
+void procesarVinculacionPendiente() {
+  if (vinculacionPendiente.isEmpty()) return;
+  String p = vinculacionPendiente;
+  vinculacionPendiente = "";
+  JsonDocument doc;
+  if (deserializeJson(doc, p)) return;
+  const char* estado = doc["estado"] | "";
+  if (strcmp(estado, "pendiente") == 0) {
+    vinculado = false;
+    codigoVinculacion = doc["codigo"] | "";
+    int ttl = doc["expira_en_s"] | 600;
+    codigoExpiraMs = millis() + (unsigned long)ttl * 1000UL;
+    guardarVinculacionNvs();
+  } else if (strcmp(estado, "vinculado") == 0) {
+    vinculado = true;
+    nombreDispositivo = doc["nombre"] | "HidroBot";
+    codigoVinculacion = "";
+    codigoExpiraMs = 0;
+    nombreMostradoHastaMs = millis() + 4000;
+    guardarVinculacionNvs();
+    if (mqtt.isConnected() && vinculado) {
+      bool pedida = mqtt.publish(TOPIC_CONFIG_SOLICITAR, "{}", false, 0);
+      Serial.printf("Config tras vincular (%s)\n", pedida ? "ok" : "fallo");
+    }
+  } else if (strcmp(estado, "desvinculado") == 0) {
+    vinculado = false;
+    guardarVinculacionNvs();
+    if (bombaEncendida) apagarBomba("desvinculado");
+  }
 }
 
 void procesarConfigPendiente() {
@@ -419,21 +554,29 @@ String clasificarFalloMqtt(bool wsListo) {
 }
 
 void mqttListo() {
-  // Suscribirse primero; la config ya no va retenida (evita PUBLISH antes del SUBACK).
+  mqtt.subscribe(TOPIC_VINCULACION, alRecibirVinculacion);
   mqtt.subscribe(TOPIC_COMANDO, alRecibirComando);
   mqtt.subscribe(TOPIC_CONFIG, alRecibirConfig);
-  mqtt.publish(TOPIC_ESTADO, "online", true, 1);
-  // Pide a la API (vía Node-RED) que publique la calibración actual sin retain.
-  bool pedida = mqtt.publish(TOPIC_CONFIG_SOLICITAR, "{}", false, 0);
-  Serial.printf("Config solicitada en %s (%s)\n",
-                TOPIC_CONFIG_SOLICITAR.c_str(), pedida ? "ok" : "fallo");
+  JsonDocument hola;
+  hola["mac"] = macLegible();
+  hola["version_firmware"] = FIRMWARE_VERSION;
+  String holaJson;
+  serializeJson(hola, holaJson);
+  mqtt.publish(TOPIC_HOLA, holaJson, false, 0);
+  if (vinculado) {
+    mqtt.publish(TOPIC_ESTADO, "online", true, 1);
+    bool pedida = mqtt.publish(TOPIC_CONFIG_SOLICITAR, "{}", false, 0);
+    Serial.printf("Config solicitada (%s)\n", pedida ? "ok" : "fallo");
+  }
   motivoFalloMqtt = "";
   wifiOkDesdeMs = 0;
   connFase = CONN_OK;
   Serial.printf("MQTT conectado (intentos previos: %u, RSSI %d)\n", intentosMqtt, WiFi.RSSI());
-  mostrarMensaje("Conectado!");
-  enviarTelemetria();
-  ultimaTelemetriaMs = millis();
+  mostrarMensaje(vinculado ? "Conectado!" : "Vincula en panel");
+  if (vinculado) {
+    enviarTelemetria();
+    ultimaTelemetriaMs = millis();
+  }
 }
 
 void prepararBrokerWs() {
@@ -517,7 +660,7 @@ void tickConexion() {
 
     case CONN_MQTT: {
       // Una sola llamada: puede tardar hasta MQTT_CMD_TIMEOUT_MS (necesario por TLS/túnel).
-      bool ok = mqtt.connect(DEVICE_ID, MQTT_USER, MQTT_PASS);
+      bool ok = mqtt.connect(deviceMqttId.c_str(), MQTT_USER, MQTT_PASS);
       if (ok) {
         mqttListo();
       } else {
@@ -564,21 +707,6 @@ button,input[type=submit]{background:linear-gradient(90deg,#1d4ed8,#22c55e)!impo
 </style>
 )CSS";
 
-static const char HIDROBOT_PORTAL_MENU_HTML[] PROGMEM =
-"<div class='hb-brand'>"
-"<svg viewBox='0 0 64 64' aria-hidden='true'>"
-"<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
-"<stop offset='0%' stop-color='#1d6eab'/><stop offset='100%' stop-color='#22c55e'/>"
-"</linearGradient></defs>"
-"<path fill='url(#g)' d='M32 6C32 6 14 28 14 40a18 18 0 0 0 36 0C50 28 32 6 32 6z'/>"
-"</svg>"
-"<span>HidroBot · Configura tu Wi-Fi</span>"
-"</div>"
-"<div class='hb-note'>"
-"<b>Dispositivo:</b> esp32-1<br/>"
-"Solo redes <b>2,4 GHz</b> (el ESP32 no usa 5 GHz)."
-"</div>";
-
 // Si hay una red guardada, se conecta. Si no (o si se fuerza),
 // abre el portal durante 5 minutos para configurarla desde el celular.
 void configurarWifi(bool forzarPortal) {
@@ -586,7 +714,12 @@ void configurarWifi(bool forzarPortal) {
   wm.setTitle("HidroBot");
   wm.setConfigPortalTimeout(300);
   wm.setCustomHeadElement(HIDROBOT_PORTAL_HEAD);
-  wm.setCustomMenuHTML(HIDROBOT_PORTAL_MENU_HTML);
+  String menuHtml =
+      String("<div class='hb-brand'>")
+      + "<span>HidroBot · Wi-Fi</span></div>"
+      + "<div class='hb-note'><b>Id:</b> " + deviceMqttId
+      + "<br/>Solo redes <b>2,4 GHz</b>.</div>";
+  wm.setCustomMenuHTML(menuHtml.c_str());
   // Solo lo necesario: Wi-Fi, información y salir (sin update/erase).
   const char* menu[3] = {"wifi", "info", "exit"};
   wm.setMenu(menu, 3);
@@ -606,21 +739,44 @@ void configurarWifi(bool forzarPortal) {
   }
 }
 
-// Mantener BOOT 5 segundos: borra el Wi-Fi guardado y reinicia en modo portal
 void revisarBotonConfig() {
   static unsigned long pulsadoDesde = 0;
   if (digitalRead(PIN_BOTON_CONFIG) == LOW) {
     if (pulsadoDesde == 0) pulsadoDesde = millis();
-    else if (millis() - pulsadoDesde > 5000) {
+    unsigned long t = millis() - pulsadoDesde;
+    if (hayPantalla) {
+      pantalla.clearDisplay();
+      pantalla.setTextSize(1);
+      pantalla.setCursor(0, 0);
+      if (t >= 15000) {
+        pantalla.println("Suelta: WiFi+NVS");
+      } else if (t >= 5000) {
+        pantalla.println("Suelta: solo WiFi");
+      } else {
+        pantalla.println("Mantén BOOT");
+        pantalla.println("5s WiFi / 15s NVS");
+      }
+      pantalla.display();
+    }
+  } else if (pulsadoDesde != 0) {
+    unsigned long t = millis() - pulsadoDesde;
+    pulsadoDesde = 0;
+    if (t >= 15000) {
+      apagarBomba("reset NVS");
+      borrarNvsUsuario();
+      WiFiManager wm;
+      wm.resetSettings();
+      mostrarMensaje("WiFi+NVS\nReiniciando");
+      delay(800);
+      ESP.restart();
+    } else if (t >= 5000) {
       apagarBomba("reconfigurar WiFi");
       mostrarMensaje("Borrando WiFi...\nReiniciando");
       WiFiManager wm;
       wm.resetSettings();
-      delay(1000);
+      delay(800);
       ESP.restart();
     }
-  } else {
-    pulsadoDesde = 0;
   }
 }
 
@@ -647,19 +803,25 @@ void setup() {
   hayPantalla = pantalla.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   if (!hayPantalla) Serial.println("Pantalla OLED no encontrada (prueba la direccion 0x3D)");
 
+  cargarVinculacionNvs();
   cargarCalibracionNvs();
 
-  String base = String("hidrobot/") + DEVICE_ID + "/";
+  WiFi.mode(WIFI_STA);
+  deviceMqttId = mqttIdDesdeMac();
+  Serial.printf("mqttId=%s mac=%s\n", deviceMqttId.c_str(), macLegible().c_str());
+
+  String base = String("hidrobot/") + deviceMqttId + "/";
   TOPIC_TELEMETRIA = base + "telemetria";
   TOPIC_ESTADO = base + "estado";
   TOPIC_EVENTO = base + "evento";
   TOPIC_COMANDO = base + "comando";
   TOPIC_CONFIG = base + "config";
   TOPIC_CONFIG_SOLICITAR = base + "config/solicitar";
+  TOPIC_HOLA = base + "hola";
+  TOPIC_VINCULACION = base + "vinculacion";
 
   mqtt.begin(wsClient);
   mqtt.setTimeout(MQTT_CMD_TIMEOUT_MS);
-  WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);  // menos latencia en redes débiles / túnel TLS
   pinMode(PIN_BOTON_CONFIG, INPUT_PULLUP);
@@ -683,6 +845,7 @@ void loop() {
   } else {
     wsClient.loop();
   }
+  procesarVinculacionPendiente();
   procesarComandoPendiente();
   procesarConfigPendiente();
 
@@ -708,7 +871,7 @@ void loop() {
     ultimaLecturaMs = millis();
     leerSensores();
   }
-  if (millis() - ultimaTelemetriaMs >= INTERVALO_TELEMETRIA_MS) {
+  if (vinculado && millis() - ultimaTelemetriaMs >= INTERVALO_TELEMETRIA_MS) {
     ultimaTelemetriaMs = millis();
     enviarTelemetria();
   }

@@ -1,0 +1,11 @@
+# ACL Mosquitto — HidroBot
+# Aplicar en el servidor (~/apps/mosquitto). Permisos: chown 1883:1883, chmod 0700 (como passwd).
+
+# Node-RED: lectura/escritura de todo el árbol hidrobot.
+user nodered
+topic readwrite hidrobot/#
+
+# Cada ESP32 (client id = mqttId hb-xxxxxx): solo su prefijo.
+# %c = client id de la conexión MQTT.
+user esp32
+pattern readwrite hidrobot/%c/#
