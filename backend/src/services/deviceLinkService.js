@@ -26,6 +26,7 @@ import {
 } from '../repos/deviceOwnerships.js'
 import { getZoneForUser } from '../repos/ownership.js'
 import { listDevicesByZone } from '../repos/devices.js'
+import { isDeviceOnline } from '../lib/deviceOnline.js'
 import { publishDeviceConfig } from './panelService.js'
 import { publishToNodeRed } from './nodered.js'
 
@@ -260,13 +261,14 @@ export async function listDevices(app, userId) {
   )
   const active = await listActiveDevicesForUser(app.db, userId)
   const past = await listPastOwnershipsForUser(app.db, userId)
+  const offlineMin = app.config.DEVICE_OFFLINE_MINUTES
   return {
     devices: active.map((row) => ({
       id: row.id,
       name: row.name,
       mqttId: row.mqtt_id,
       firmwareVersion: row.firmware_version,
-      online: row.online,
+      online: isDeviceOnline(row, offlineMin),
       lastSeenAt: row.last_seen_at,
       zoneId: row.zone_id,
       zoneName: row.zone_name,

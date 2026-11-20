@@ -1,4 +1,6 @@
 import { AppError } from '../lib/errors.js'
+import { isDeviceOnline } from '../lib/deviceOnline.js'
+import { validateTankDistancePair } from '../lib/tankCalibration.js'
 import { listAlertsForUser, markAlertRead } from '../repos/alerts.js'
 import { ensureCalibration, updateCalibration } from '../repos/calibration.js'
 import {
@@ -118,13 +120,6 @@ export function insertGapBreaks(points, gapMs) {
     out.push(point)
   }
   return out
-}
-
-function isDeviceOnline(device, offlineMinutes) {
-  if (device.online === false) return false
-  if (!device.last_seen_at) return false
-  const ageMs = Date.now() - new Date(device.last_seen_at).getTime()
-  return ageMs <= offlineMinutes * 60 * 1000
 }
 
 function pumpActive(device, openEvent, lastAcked) {
@@ -500,6 +495,13 @@ export async function getDeviceCalibration(app, userId, deviceId) {
 export async function patchDeviceCalibration(app, userId, deviceId, patch) {
   const device = await getDeviceForUser(app.db, deviceId, userId)
   if (!device) throw new AppError(404, 'Dispositivo no encontrado')
+  const current = await ensureCalibration(app.db, deviceId)
+  if (patch.distanceFullCm != null || patch.distanceEmptyCm != null) {
+    const full = Number(patch.distanceFullCm ?? current.distance_full_cm)
+    const empty = Number(patch.distanceEmptyCm ?? current.distance_empty_cm)
+    const tankErr = validateTankDistancePair(full, empty)
+    if (tankErr) throw new AppError(400, tankErr)
+  }
   const updated = await updateCalibration(app.db, deviceId, patch)
   await pushConfig(app, device)
   return mapCalibration(updated)

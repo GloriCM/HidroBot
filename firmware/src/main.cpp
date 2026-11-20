@@ -108,6 +108,9 @@ enum ConnFase : uint8_t {
 };
 ConnFase connFase = CONN_WIFI;
 
+bool canalMqttListo();
+void instalarManejadorWebSocket();
+
 int sueloRaw = 0;
 float distanciaCm = -1;   // -1 = sin lectura valida todavia
 float vRed = 0;
@@ -238,7 +241,7 @@ void actualizarPantallaSensores() {
   } else {
     pantalla.println("Bomba: OFF");
   }
-  if (mqtt.isConnected()) {
+  if (canalMqttListo()) {
     pantalla.printf("WiFi:%s MQTT:ok\n", WiFi.status() == WL_CONNECTED ? "ok" : "--");
   } else {
     pantalla.printf("MQTT x%d RSSI:%d\n", intentosMqtt, WiFi.RSSI());
@@ -347,7 +350,7 @@ void publicarEvento(const char* tipo, unsigned long segundos) {
   doc["segundos"] = segundos;
   String s;
   serializeJson(doc, s);
-  if (mqtt.isConnected()) mqtt.publish(TOPIC_EVENTO, s);
+  if (canalMqttListo()) mqtt.publish(TOPIC_EVENTO, s);
   Serial.printf("Evento: %s\n", s.c_str());
 }
 
@@ -363,7 +366,7 @@ void enviarTelemetria() {
   doc["rssi"] = WiFi.RSSI();
   String s;
   serializeJson(doc, s);
-  bool ok = mqtt.isConnected() && mqtt.publish(TOPIC_TELEMETRIA, s);
+  bool ok = canalMqttListo() && mqtt.publish(TOPIC_TELEMETRIA, s);
   Serial.printf("Telemetria %s: %s\n", ok ? "enviada" : "NO enviada", s.c_str());
 }
 
@@ -432,7 +435,7 @@ void procesarVinculacionPendiente() {
     codigoExpiraMs = 0;
     nombreMostradoHastaMs = millis() + 4000;
     guardarVinculacionNvs();
-    if (mqtt.isConnected() && vinculado) {
+    if (canalMqttListo() && vinculado) {
       bool pedida = mqtt.publish(TOPIC_CONFIG_SOLICITAR, "{}", false, 0);
       Serial.printf("Config tras vincular (%s)\n", pedida ? "ok" : "fallo");
     }
@@ -519,6 +522,40 @@ void procesarComandoPendiente() {
 }
 
 // ===================== CONEXION (no bloqueante desde loop) =====================
+static constexpr unsigned long WS_RECONEX_MS = 2000;
+
+bool canalMqttListo() {
+  return WiFi.status() == WL_CONNECTED && wsClient.isConnected() && mqtt.isConnected();
+}
+
+void alEventoWebSocket(WStype_t type, uint8_t* payload, size_t length) {
+  switch (type) {
+    case WStype_DISCONNECTED:
+      Serial.println("WebSocket desconectado");
+      mqtt.hidroMarcarDesconectado();
+      if (connFase == CONN_OK || connFase == CONN_MQTT) {
+        connFase = CONN_WS_ESPERA;
+        connFaseDesdeMs = millis();
+        wifiOkDesdeMs = (WiFi.status() == WL_CONNECTED) ? millis() : 0;
+      }
+      break;
+    case WStype_CONNECTED:
+      Serial.println("WebSocket listo; conectando MQTT...");
+      connFase = CONN_MQTT;
+      break;
+    case WStype_TEXT:
+    case WStype_BIN:
+      mqtt.hidroEncolarWsRx(payload, length);
+      break;
+    default:
+      break;
+  }
+}
+
+void instalarManejadorWebSocket() {
+  wsClient.onEvent(alEventoWebSocket);
+}
+
 void registrarFalloMqtt(const String& motivo) {
   intentosMqtt++;
   motivoFalloMqtt = motivo;
@@ -582,7 +619,8 @@ void mqttListo() {
 void prepararBrokerWs() {
   wsClient.disconnect();
   wsClient.beginSSL(MQTT_HOST, MQTT_PORT, MQTT_PATH, "", "mqtt");
-  wsClient.setReconnectInterval(2000);
+  wsClient.setReconnectInterval(WS_RECONEX_MS);
+  instalarManejadorWebSocket();
   mqtt.setTimeout(MQTT_CMD_TIMEOUT_MS);
   mqtt.setWill(TOPIC_ESTADO, "offline", true, 1);
   connFaseDesdeMs = millis();
@@ -610,9 +648,20 @@ void tickConexion() {
     ESP.restart();
   }
 
-  if (mqtt.isConnected()) {
+  if (canalMqttListo()) {
     if (connFase != CONN_OK) connFase = CONN_OK;
     return;
+  }
+
+  if (connFase == CONN_OK) {
+    if (!wsClient.isConnected()) {
+      mqtt.hidroMarcarDesconectado();
+      connFase = CONN_WS_ESPERA;
+      connFaseDesdeMs = ahora;
+      wifiOkDesdeMs = ahora;
+    } else if (!mqtt.isConnected()) {
+      connFase = CONN_MQTT;
+    }
   }
 
   // Sin MQTT: bomba apagada por seguridad (idempotente).
@@ -659,6 +708,9 @@ void tickConexion() {
       break;
 
     case CONN_MQTT: {
+      if (!wsClient.isConnected()) break;
+      // Cada WebSocket (nuevo o reconectado) exige un CONNECT MQTT limpio.
+      mqtt.hidroMarcarDesconectado();
       // Una sola llamada: puede tardar hasta MQTT_CMD_TIMEOUT_MS (necesario por TLS/túnel).
       bool ok = mqtt.connect(deviceMqttId.c_str(), MQTT_USER, MQTT_PASS);
       if (ok) {
@@ -821,6 +873,8 @@ void setup() {
   TOPIC_VINCULACION = base + "vinculacion";
 
   mqtt.begin(wsClient);
+  wsClient.setReconnectInterval(WS_RECONEX_MS);
+  instalarManejadorWebSocket();
   mqtt.setTimeout(MQTT_CMD_TIMEOUT_MS);
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);  // menos latencia en redes débiles / túnel TLS
@@ -840,9 +894,12 @@ void loop() {
   // Conexion Wi-Fi / WebSocket / MQTT en pasos (no bloquea BOOT ni la bomba).
   tickConexion();
 
-  if (mqtt.isConnected()) {
-    mqtt.update();
-  } else {
+  if (canalMqttListo()) {
+    if (!mqtt.update()) {
+      connFase = CONN_WS_ESPERA;
+      connFaseDesdeMs = millis();
+    }
+  } else if (connFase == CONN_WS_ESPERA || connFase == CONN_MQTT || connFase == CONN_PAUSA) {
     wsClient.loop();
   }
   procesarVinculacionPendiente();

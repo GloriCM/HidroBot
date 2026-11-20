@@ -22,6 +22,12 @@ import HistoryChart from '../components/HistoryChart'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
 import { moistureState } from '../lib/moisture'
+import {
+  stableMedianFromReadings,
+  tankPctFromDistance,
+  TANK_MEDIAN_SAMPLE_SIZE,
+  validateTankDistancePair,
+} from '../lib/tankCalibration'
 
 const nav = [
   { id: 'inicio', label: 'Inicio', icon: Home },
@@ -156,9 +162,8 @@ function validateCalibrationDraft(draft) {
   if (humidityRawDry <= humidityRawWet) {
     return 'El raw seco debe ser mayor que el raw mojado.'
   }
-  if (distanceEmptyCm <= distanceFullCm) {
-    return 'La distancia vacío debe ser mayor que la de lleno.'
-  }
+  const tankErr = validateTankDistancePair(distanceFullCm, distanceEmptyCm)
+  if (tankErr) return tankErr
   if (batteryVFull <= batteryVEmpty) {
     return 'El voltaje lleno debe ser mayor que el vacío.'
   }
@@ -208,6 +213,8 @@ export default function Dashboard() {
   const [calDraft, setCalDraft] = useState({})
   const [settingsBaseline, setSettingsBaseline] = useState(null)
   const [calBaseline, setCalBaseline] = useState(null)
+  const [tankWizardStep, setTankWizardStep] = useState(1)
+  const distanceSamplesRef = useRef([])
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
   const [profileNote, setProfileNote] = useState('')
   const [profileError, setProfileError] = useState('')
@@ -286,11 +293,34 @@ export default function Dashboard() {
     }
   }, [ready, user, loadSummary, loadSeries, range])
 
-  // Al abrir Configuración, recarga el formulario solo si no hay cambios pendientes.
   useEffect(() => {
-    if (section !== 'dispositivos') return
+    if (section !== 'dispositivos') return undefined
     void loadDevices()
+    const id = setInterval(() => {
+      void loadDevices()
+    }, 10_000)
+    return () => clearInterval(id)
   }, [section])
+
+  useEffect(() => {
+    if (section !== 'sistema') return
+    const full = parseLocaleNumber(calDraft.distanceFullCm)
+    const empty = parseLocaleNumber(calDraft.distanceEmptyCm)
+    if (validateTankDistancePair(full, empty) === null) {
+      setTankWizardStep(3)
+    }
+  }, [section, calDraft.distanceFullCm, calDraft.distanceEmptyCm])
+
+  useEffect(() => {
+    if (section !== 'sistema') return
+    const d = summary.latest?.distanceCm
+    const at = summary.latest?.recordedAt
+    if (d == null || !Number.isFinite(d)) return
+    const buf = distanceSamplesRef.current
+    if (buf.length && buf[buf.length - 1].at === at) return
+    buf.push({ value: d, at: at ?? Date.now() })
+    while (buf.length > 30) buf.shift()
+  }, [section, summary.latest?.distanceCm, summary.latest?.recordedAt])
 
   useEffect(() => {
     if (section !== 'sistema') return
@@ -339,6 +369,13 @@ export default function Dashboard() {
   const watch = summary.settings?.watchPct ?? 55
   const auto = (settingsDraft.mode || summary.settings?.mode) !== 'manual'
   const online = summary.online
+  const liveDistance = summary.latest?.distanceCm
+  const distancePreview = stableMedianFromReadings(
+    distanceSamplesRef.current.map((s) => s.value),
+    TANK_MEDIAN_SAMPLE_SIZE,
+  )
+  const liveTankPct =
+    liveDistance != null ? tankPctFromDistance(liveDistance, calDraft) : null
   const pump = summary.pump
   const onBattery = summary.onBattery
   const settingsDirty = Boolean(settingsBaseline) && !sameSettings(settingsDraft, settingsBaseline)
@@ -513,6 +550,50 @@ export default function Dashboard() {
       })
       setActionNote('Calibración guardada.')
       await loadSummary({ syncForms: true })
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function captureTankLevel(kind) {
+    if (!summary.device?.id || busy) return
+    const values = distanceSamplesRef.current.map((s) => s.value)
+    const { median, count, stability } = stableMedianFromReadings(values, TANK_MEDIAN_SAMPLE_SIZE)
+    if (median == null || count === 0) {
+      setActionError(
+        'Aún no hay lecturas válidas del ultrasonido. Deja el tanque quieto y espera unos segundos.',
+      )
+      return
+    }
+    const key = kind === 'empty' ? 'distanceEmptyCm' : 'distanceFullCm'
+    const full =
+      kind === 'full' ? median : parseLocaleNumber(calDraft.distanceFullCm)
+    const empty =
+      kind === 'empty' ? median : parseLocaleNumber(calDraft.distanceEmptyCm)
+    const tankErr = validateTankDistancePair(full, empty)
+    if (tankErr) {
+      setActionError(tankErr)
+      return
+    }
+    const nextDraft = { ...calDraft, [key]: Math.round(median * 10) / 10 }
+    setBusy(true)
+    setActionError('')
+    setCalDraft(nextDraft)
+    try {
+      await api.patchCalibration(summary.device.id, {
+        [key]: nextDraft[key],
+      })
+      setCalBaseline((current) => ({ ...(current || nextDraft), [key]: nextDraft[key] }))
+      const label = kind === 'empty' ? 'vacío' : 'lleno'
+      let note = `Tanque ${label}: mediana ${median.toFixed(1)} cm con ${count} lectura${count === 1 ? '' : 's'}.`
+      if (stability.unstable) {
+        note += ` Aviso: las lecturas varían ${stability.spread.toFixed(1)} cm (rebotes en las paredes u ondas).`
+      }
+      setActionNote(note)
+      setTankWizardStep(kind === 'empty' ? 2 : 3)
+      await loadSummary({ syncForms: false })
     } catch (err) {
       setActionError(err.message)
     } finally {
@@ -800,7 +881,7 @@ export default function Dashboard() {
                                 <p className="font-extrabold">{d.name}</p>
                                 <p className="text-[#6b8494]">{d.zoneName} · {d.mqttId}</p>
                                 <p className="text-xs">
-                                  FW {d.firmwareVersion || '—'} · {d.online ? 'En línea' : 'Sin conexión'}
+                                  FW {d.firmwareVersion || '—'} · {d.online ? 'En línea' : 'Desconectado'}
                                 </p>
                               </div>
                               <button
@@ -935,8 +1016,95 @@ export default function Dashboard() {
 
                         <form className="mt-5 grid gap-2 border-t border-[#e7eef3] pt-4" onSubmit={saveCalibration}>
                           <h3 className="font-extrabold">Calibraciones</h3>
+
+                          <div className="rounded-2xl border border-[#d7e3ee] bg-white/70 p-3">
+                            <h4 className="font-extrabold text-[#0a3d6b]">Tanque (3 pasos)</h4>
+                            <p className="mt-1 text-xs font-semibold text-[#6b8494]">
+                              Distancia en vivo:{' '}
+                              <b>{liveDistance == null ? '—' : `${liveDistance} cm`}</b>
+                              {distancePreview.count > 0 ? (
+                                <span>
+                                  {' '}
+                                  · mediana previa ({distancePreview.count} lect.):{' '}
+                                  {distancePreview.median?.toFixed(1)} cm
+                                </span>
+                              ) : null}
+                            </p>
+
+                            {tankWizardStep === 1 && (
+                              <div className="mt-3 grid gap-2 text-sm">
+                                <p className="font-bold text-[#0a3d6b]">Paso 1 · Tanque vacío</p>
+                                <p className="text-xs text-[#6b8494]">
+                                  Deja el tanque en el nivel mínimo útil: donde la bomba ya no alcanza a tomar agua.
+                                  El líquido debe estar quieto unos segundos.
+                                </p>
+                                <button
+                                  type="button"
+                                  className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold"
+                                  disabled={busy || distancePreview.count === 0}
+                                  onClick={() => { void captureTankLevel('empty') }}
+                                >
+                                  Guardar como vacío
+                                </button>
+                              </div>
+                            )}
+
+                            {tankWizardStep === 2 && (
+                              <div className="mt-3 grid gap-2 text-sm">
+                                <p className="font-bold text-[#0a3d6b]">Paso 2 · Tanque lleno</p>
+                                <p className="text-xs text-[#6b8494]">
+                                  Llena hasta el nivel máximo de uso, al menos 5 cm por debajo del sensor HC-SR04.
+                                </p>
+                                <p className="text-xs text-[#6b8494]">
+                                  Vacío calibrado: <b>{calDraft.distanceEmptyCm} cm</b>
+                                </p>
+                                <button
+                                  type="button"
+                                  className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold"
+                                  disabled={busy || distancePreview.count === 0}
+                                  onClick={() => { void captureTankLevel('full') }}
+                                >
+                                  Guardar como lleno
+                                </button>
+                              </div>
+                            )}
+
+                            {tankWizardStep === 3 && (
+                              <div className="mt-3 grid gap-2 text-sm">
+                                <p className="font-bold text-[#0a3d6b]">Paso 3 · Comprobar</p>
+                                <p className="text-xs text-[#6b8494]">
+                                  Lleno <b>{calDraft.distanceFullCm} cm</b> · Vacío{' '}
+                                  <b>{calDraft.distanceEmptyCm} cm</b>
+                                </p>
+                                <p className="text-lg font-extrabold text-[#1f9d4a]">
+                                  Nivel calculado:{' '}
+                                  {liveTankPct == null ? '—' : `${liveTankPct.toFixed(1)} %`}
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    className="h-9 rounded-xl border border-[#d7e3ee] px-3 text-xs font-bold"
+                                    disabled={busy}
+                                    onClick={() => setTankWizardStep(1)}
+                                  >
+                                    Repetir calibración
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="mt-2 flex gap-1">
+                              {[1, 2, 3].map((step) => (
+                                <span
+                                  key={step}
+                                  className={`h-1.5 flex-1 rounded-full ${tankWizardStep >= step ? 'bg-[#22c55e]' : 'bg-[#e7eef3]'}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+
                           <p className="text-xs font-semibold text-[#6b8494]">
-                            Usa la última lectura cruda ({summary.latest?.humidityRaw ?? 'sin dato'}) y pulsa “Guardar como seco/mojado”.
+                            Humedad de suelo: última cruda ({summary.latest?.humidityRaw ?? 'sin dato'}).
                           </p>
                           <div className="grid grid-cols-2 gap-2">
                             <button type="button" className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold" disabled={busy} onClick={() => { void captureSoil('dry') }}>Guardar como seco</button>
@@ -945,8 +1113,6 @@ export default function Dashboard() {
                           {[
                             ['humidityRawDry', 'Raw seco'],
                             ['humidityRawWet', 'Raw mojado'],
-                            ['distanceFullCm', 'Dist. lleno cm'],
-                            ['distanceEmptyCm', 'Dist. vacío cm'],
                             ['batteryVEmpty', 'V batería vacía'],
                             ['batteryVFull', 'V batería llena'],
                           ].map(([key, label]) => (
