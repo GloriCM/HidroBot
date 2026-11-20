@@ -139,3 +139,19 @@ export async function deleteOldTelemetry(db, retentionDays) {
   )
   return result.rowCount || 0
 }
+
+/**
+ * Últimas lecturas con ultrasónico (más reciente primero).
+ * @param {import('pg').Pool | import('pg').PoolClient} db
+ */
+export async function listRecentTankReadings(db, deviceId, limit = 10) {
+  const result = await db.query(
+    `SELECT tank_pct, distance_cm, recorded_at
+     FROM device_telemetry
+     WHERE device_id = $1 AND distance_cm IS NOT NULL
+     ORDER BY recorded_at DESC
+     LIMIT $2`,
+    [deviceId, limit],
+  )
+  return result.rows
+}

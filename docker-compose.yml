@@ -35,6 +35,14 @@ services:
       NODERED_COMMAND_URL: ${NODERED_COMMAND_URL:-}
       NODERED_TOKEN: ${NODERED_TOKEN:-}
       NODERED_TIMEOUT_MS: ${NODERED_TIMEOUT_MS:-3000}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      APP_URL: ${APP_URL:-}
+      MAIL_MAX_PER_DEVICE_PER_HOUR: ${MAIL_MAX_PER_DEVICE_PER_HOUR:-5}
       NODE_ENV: ${NODE_ENV:-production}
     depends_on:
       db:

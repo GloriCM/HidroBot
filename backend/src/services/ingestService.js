@@ -19,6 +19,7 @@ import { getZoneSettings } from '../repos/zones.js'
 import { raiseAlert } from './alertService.js'
 import { decideIrrigation } from './irrigationDecision.js'
 import { publishDeviceConfig } from './panelService.js'
+import { evaluateTankEmailAfterTelemetry } from './tankEmailNotifier.js'
 
 async function resolveDevice(app, { deviceId, mqttId }) {
   let device = null
@@ -202,6 +203,17 @@ export async function ingestTelemetry(app, input) {
       type: 'dry_persistent',
       severity: 'warning',
       message: `Humedad baja (${humidityPct}%) en ${ctx.name}.`,
+    })
+  }
+
+  if (hasDistance) {
+    evaluateTankEmailAfterTelemetry(app, {
+      deviceId: ctx.id,
+      zoneId: ctx.zone_id,
+      deviceName: ctx.name,
+      recordedAt: row.recorded_at,
+      distanceCm,
+      tankPct,
     })
   }
 

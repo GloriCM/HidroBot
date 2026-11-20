@@ -168,7 +168,7 @@ export async function listAllDevices(db) {
 
 export async function listStaleDevices(db, offlineMinutes) {
   const result = await db.query(
-    `SELECT d.id, d.name, d.zone_id, d.last_seen_at, d.mqtt_id, g.user_id
+    `SELECT d.id, d.name, d.zone_id, z.name AS zone_name, d.last_seen_at, d.mqtt_id, g.user_id
      FROM devices d
      INNER JOIN zones z ON z.id = d.zone_id
      INNER JOIN gardens g ON g.id = z.garden_id

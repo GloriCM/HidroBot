@@ -7,6 +7,7 @@ import { setupAuth } from './plugins/auth.js'
 import { authRoutes } from './routes/auth.js'
 import { healthRoutes } from './routes/health.js'
 import { ingestRoutes } from './routes/ingest.js'
+import { emailRoutes } from './routes/email.js'
 import { panelRoutes } from './routes/panel.js'
 
 /**
@@ -35,6 +36,7 @@ export async function buildApp({ config }) {
 
   await app.register(healthRoutes, { databaseUrl: config.DATABASE_URL })
   await app.register(authRoutes)
+  await app.register(emailRoutes)
   await app.register(panelRoutes)
   await app.register(ingestRoutes)
 

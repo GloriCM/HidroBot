@@ -80,4 +80,17 @@ export const api = {
   stopIrrigation: (zoneId) =>
     request(`/api/zones/${zoneId}/commands/stop`, { method: 'POST', body: '{}' }),
   alerts: () => request('/api/alerts'),
+
+  getNotifications: (zoneId) => request(`/api/zones/${zoneId}/notifications`),
+  patchNotifications: (zoneId, body) =>
+    request(`/api/zones/${zoneId}/notifications`, { method: 'PATCH', body: JSON.stringify(body) }),
+  addNotificationRecipient: (zoneId, email) =>
+    request(`/api/zones/${zoneId}/notifications/recipients`, {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  removeNotificationRecipient: (zoneId, recipientId) =>
+    request(`/api/zones/${zoneId}/notifications/recipients/${recipientId}`, { method: 'DELETE' }),
+  sendTestNotificationEmail: (zoneId) =>
+    request(`/api/zones/${zoneId}/notifications/test`, { method: 'POST', body: '{}' }),
 }

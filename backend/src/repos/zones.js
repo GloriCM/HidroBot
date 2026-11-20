@@ -16,7 +16,7 @@ export async function listZonesByGarden(db, gardenId) {
 export async function getZoneSettings(db, zoneId) {
   const result = await db.query(
     `SELECT zone_id, threshold_pct, watch_pct, max_irrigation_seconds, mode,
-            tank_min_pct, battery_min_pct, allow_manual_on_battery, updated_at
+            tank_min_pct, tank_alert_low_pct, battery_min_pct, allow_manual_on_battery, updated_at
      FROM zone_settings WHERE zone_id = $1`,
     [zoneId],
   )
@@ -34,12 +34,13 @@ export async function updateZoneSettings(db, zoneId, patch) {
        max_irrigation_seconds = COALESCE($4, max_irrigation_seconds),
        mode = COALESCE($5, mode),
        tank_min_pct = COALESCE($6, tank_min_pct),
-       battery_min_pct = COALESCE($7, battery_min_pct),
-       allow_manual_on_battery = COALESCE($8, allow_manual_on_battery),
+       tank_alert_low_pct = COALESCE($7, tank_alert_low_pct),
+       battery_min_pct = COALESCE($8, battery_min_pct),
+       allow_manual_on_battery = COALESCE($9, allow_manual_on_battery),
        updated_at = now()
      WHERE zone_id = $1
      RETURNING zone_id, threshold_pct, watch_pct, max_irrigation_seconds, mode,
-               tank_min_pct, battery_min_pct, allow_manual_on_battery, updated_at`,
+               tank_min_pct, tank_alert_low_pct, battery_min_pct, allow_manual_on_battery, updated_at`,
     [
       zoneId,
       patch.thresholdPct ?? null,
@@ -47,6 +48,7 @@ export async function updateZoneSettings(db, zoneId, patch) {
       patch.maxIrrigationSeconds ?? null,
       patch.mode ?? null,
       patch.tankMinPct ?? null,
+      patch.tankAlertLowPct ?? null,
       patch.batteryMinPct ?? null,
       patch.allowManualOnBattery ?? null,
     ],

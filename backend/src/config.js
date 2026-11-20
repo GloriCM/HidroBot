@@ -28,6 +28,14 @@ const schema = z.object({
   CLAIM_CODE_TTL_MINUTES: z.coerce.number().int().positive().default(10),
   CLAIM_MAX_ATTEMPTS: z.coerce.number().int().positive().default(10),
   CLAIM_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+  SMTP_HOST: z.string().optional().default(''),
+  SMTP_PORT: z.coerce.number().int().positive().default(465),
+  SMTP_SECURE: bool.default(true),
+  SMTP_USER: z.string().optional().default(''),
+  SMTP_PASS: z.string().optional().default(''),
+  MAIL_FROM: z.string().optional().default(''),
+  APP_URL: z.string().optional().default(''),
+  MAIL_MAX_PER_DEVICE_PER_HOUR: z.coerce.number().int().positive().default(5),
 })
 
 export function loadConfig(env = process.env) {

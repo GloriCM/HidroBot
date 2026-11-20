@@ -262,6 +262,8 @@ export default function Dashboard() {
   const [profileNote, setProfileNote] = useState('')
   const [profileError, setProfileError] = useState('')
   const [profileTab, setProfileTab] = useState('datos')
+  const [notifDraft, setNotifDraft] = useState(null)
+  const [extraEmail, setExtraEmail] = useState('')
   const menuRef = useRef(null)
   const formsHydratedRef = useRef(false)
   const settingsDirtyRef = useRef(false)
@@ -402,6 +404,14 @@ export default function Dashboard() {
       syncFormsFrom(summaryRef.current)
     }
   }, [section, syncFormsFrom])
+
+  useEffect(() => {
+    if (section !== 'sistema' || !summary.zone?.id) return
+    api
+      .getNotifications(summary.zone.id)
+      .then((data) => setNotifDraft(data.notifications))
+      .catch(() => setNotifDraft(null))
+  }, [section, summary.zone?.id])
 
   useEffect(() => {
     if (!user) return
@@ -610,6 +620,90 @@ export default function Dashboard() {
       })
       setActionNote('Configuración guardada.')
       await loadSummary({ syncForms: true })
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveNotifications() {
+    if (!summary.zone?.id || !notifDraft || busy) return
+    const low = parseLocaleNumber(notifDraft.tankAlertLowPct)
+    if (!Number.isFinite(low) || low < 0 || low > 100) {
+      setActionError('El umbral de aviso de tanque debe estar entre 0 y 100.')
+      return
+    }
+    setBusy(true)
+    setActionError('')
+    try {
+      const data = await api.patchNotifications(summary.zone.id, {
+        enabled: Boolean(notifDraft.enabled),
+        notifyTankLow: Boolean(notifDraft.notifyTankLow),
+        notifyTankEmpty: Boolean(notifDraft.notifyTankEmpty),
+        notifyTankRecovered: Boolean(notifDraft.notifyTankRecovered),
+        notifyDeviceOffline: Boolean(notifDraft.notifyDeviceOffline),
+        ownerEmailEnabled: Boolean(notifDraft.ownerEmailEnabled),
+        tankAlertLowPct: low,
+      })
+      setNotifDraft(data.notifications)
+      setActionNote('Notificaciones guardadas.')
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function addExtraRecipient() {
+    if (!summary.zone?.id || busy) return
+    const email = extraEmail.trim()
+    if (!email) return
+    setBusy(true)
+    setActionError('')
+    try {
+      const data = await api.addNotificationRecipient(summary.zone.id, email)
+      setNotifDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              extraRecipients: [...(prev.extraRecipients || []), data.recipient],
+            }
+          : prev,
+      )
+      setExtraEmail('')
+      setActionNote('Revisa el correo para confirmar el destinatario adicional.')
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function removeExtraRecipient(id) {
+    if (!summary.zone?.id || busy) return
+    setBusy(true)
+    try {
+      await api.removeNotificationRecipient(summary.zone.id, id)
+      setNotifDraft((prev) =>
+        prev
+          ? { ...prev, extraRecipients: (prev.extraRecipients || []).filter((r) => r.id !== id) }
+          : prev,
+      )
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function sendTestEmail() {
+    if (!summary.zone?.id || busy) return
+    setBusy(true)
+    setActionError('')
+    try {
+      const result = await api.sendTestNotificationEmail(summary.zone.id)
+      setActionNote(result.message || 'Correo de prueba encolado.')
     } catch (err) {
       setActionError(err.message)
     } finally {
@@ -1147,6 +1241,143 @@ export default function Dashboard() {
                           </label>
                           <button className="h-11 rounded-xl bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] font-extrabold text-white" type="submit" disabled={busy}>Guardar ajustes</button>
                         </form>
+
+                        {notifDraft ? (
+                          <div className="mt-5 grid gap-3 rounded-2xl border border-[#d7e3ee] bg-white/75 p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <h3 className="font-extrabold text-[#0a3d6b]">Notificaciones</h3>
+                              {!notifDraft.smtpConfigured ? (
+                                <span className="rounded-full bg-[#fff4e5] px-2.5 py-1 text-[11px] font-bold text-[#9a5b00]">
+                                  SMTP no configurado en el servidor
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="text-xs font-semibold text-[#6b8494]">
+                              Dueño: {notifDraft.ownerEmail || '—'}
+                            </p>
+                            <label className="flex items-center justify-between text-sm font-bold text-[#0a3d6b]">
+                              Activar correos
+                              <button
+                                type="button"
+                                className={`h-7 w-12 rounded-full p-1 ${notifDraft.enabled ? 'bg-[#2fbe59]' : 'bg-[#24527a]'}`}
+                                onClick={() => setNotifDraft((c) => ({ ...c, enabled: !c.enabled }))}
+                              >
+                                <i
+                                  className={`block h-5 w-5 rounded-full bg-white transition ${notifDraft.enabled ? 'translate-x-5' : ''}`}
+                                />
+                              </button>
+                            </label>
+                            <label className="block text-sm font-bold text-[#0a3d6b]">
+                              Umbral aviso tanque bajo (%)
+                              <input
+                                className="mt-1 h-10 w-full rounded-xl border border-[#d7e3ee] bg-white px-3"
+                                type="text"
+                                inputMode="decimal"
+                                value={notifDraft.tankAlertLowPct ?? 20}
+                                onChange={(e) =>
+                                  setNotifDraft((c) => ({ ...c, tankAlertLowPct: e.target.value }))
+                                }
+                              />
+                            </label>
+                            {[
+                              ['notifyTankLow', 'Tanque bajo'],
+                              ['notifyTankEmpty', 'Tanque vacío (riego bloqueado)'],
+                              ['notifyTankRecovered', 'Tanque recuperado'],
+                              ['notifyDeviceOffline', 'Dispositivo desconectado'],
+                            ].map(([key, label]) => (
+                              <label
+                                key={key}
+                                className="flex items-center justify-between text-sm font-bold text-[#0a3d6b]"
+                              >
+                                {label}
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(notifDraft[key])}
+                                  onChange={(e) =>
+                                    setNotifDraft((c) => ({ ...c, [key]: e.target.checked }))
+                                  }
+                                />
+                              </label>
+                            ))}
+                            <label className="flex items-center justify-between text-sm font-bold text-[#0a3d6b]">
+                              Correo del dueño activo
+                              <input
+                                type="checkbox"
+                                checked={Boolean(notifDraft.ownerEmailEnabled)}
+                                onChange={(e) =>
+                                  setNotifDraft((c) => ({ ...c, ownerEmailEnabled: e.target.checked }))
+                                }
+                              />
+                            </label>
+                            <ul className="grid gap-2 text-sm">
+                              {(notifDraft.extraRecipients || []).map((r) => (
+                                <li
+                                  key={r.id}
+                                  className="flex items-center justify-between rounded-xl border border-[#d7e3ee] bg-white px-3 py-2"
+                                >
+                                  <span>
+                                    {r.email}{' '}
+                                    <span className="text-xs text-[#6b8494]">
+                                      {r.confirmed ? '(confirmado)' : '(pendiente)'}
+                                    </span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="text-xs font-bold text-[#b42318]"
+                                    onClick={() => {
+                                      void removeExtraRecipient(r.id)
+                                    }}
+                                  >
+                                    Quitar
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                            {(notifDraft.extraRecipients || []).length < 3 ? (
+                              <div className="flex gap-2">
+                                <input
+                                  className="h-10 flex-1 rounded-xl border border-[#d7e3ee] bg-white px-3 text-sm"
+                                  type="email"
+                                  placeholder="Correo adicional"
+                                  value={extraEmail}
+                                  onChange={(e) => setExtraEmail(e.target.value)}
+                                />
+                                <button
+                                  type="button"
+                                  className="h-10 rounded-xl border border-[#d7e3ee] bg-white px-3 text-sm font-bold text-[#0a3d6b]"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    void addExtraRecipient()
+                                  }}
+                                >
+                                  Añadir
+                                </button>
+                              </div>
+                            ) : null}
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <button
+                                type="button"
+                                className="h-11 rounded-xl border border-[#d7e3ee] bg-white font-extrabold text-[#0a3d6b]"
+                                disabled={busy}
+                                onClick={() => {
+                                  void saveNotifications()
+                                }}
+                              >
+                                Guardar notificaciones
+                              </button>
+                              <button
+                                type="button"
+                                className="h-11 rounded-xl bg-[#16324a] font-extrabold text-white disabled:opacity-50"
+                                disabled={busy || !notifDraft.smtpConfigured}
+                                onClick={() => {
+                                  void sendTestEmail()
+                                }}
+                              >
+                                Enviar correo de prueba
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
 
                         <div className="mt-5 grid gap-3 border-t border-[#e7eef3] pt-4">
                           <h3 className="font-extrabold">Calibraciones</h3>

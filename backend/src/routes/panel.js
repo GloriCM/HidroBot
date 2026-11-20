@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { AppError } from '../lib/errors.js'
 import * as deviceLinkService from '../services/deviceLinkService.js'
+import * as emailNotificationService from '../services/emailNotificationService.js'
 import * as panelService from '../services/panelService.js'
 
 const settingsSchema = z.object({
@@ -9,6 +10,7 @@ const settingsSchema = z.object({
   maxIrrigationSeconds: z.number().int().positive().max(600).optional(),
   mode: z.enum(['auto', 'manual']).optional(),
   tankMinPct: z.number().min(0).max(100).optional(),
+  tankAlertLowPct: z.number().min(0).max(100).optional(),
   batteryMinPct: z.number().min(0).max(100).optional(),
   allowManualOnBattery: z.boolean().optional(),
 })
@@ -175,5 +177,63 @@ export async function panelRoutes(app) {
   app.patch('/api/alerts/:id/read', async (request) => {
     const alert = await panelService.readAlert(app, request.user.id, request.params.id)
     return { alert }
+  })
+
+  const notificationsPatchSchema = z.object({
+    enabled: z.boolean().optional(),
+    notifyTankLow: z.boolean().optional(),
+    notifyTankEmpty: z.boolean().optional(),
+    notifyTankRecovered: z.boolean().optional(),
+    notifyDeviceOffline: z.boolean().optional(),
+    ownerEmailEnabled: z.boolean().optional(),
+    tankAlertLowPct: z.number().min(0).max(100).optional(),
+  })
+
+  app.get('/api/zones/:zoneId/notifications', async (request) => {
+    const notifications = await emailNotificationService.getNotificationsForZone(
+      app,
+      request.user.id,
+      request.params.zoneId,
+    )
+    return { notifications }
+  })
+
+  app.patch('/api/zones/:zoneId/notifications', async (request) => {
+    const parsed = notificationsPatchSchema.safeParse(request.body ?? {})
+    if (!parsed.success) throw new AppError(400, 'Datos inválidos')
+    const notifications = await emailNotificationService.patchNotificationsForZone(
+      app,
+      request.user.id,
+      request.params.zoneId,
+      parsed.data,
+    )
+    return { notifications }
+  })
+
+  app.post('/api/zones/:zoneId/notifications/recipients', async (request) => {
+    const schema = z.object({ email: z.string().email() })
+    const parsed = schema.safeParse(request.body ?? {})
+    if (!parsed.success) throw new AppError(400, 'Correo inválido')
+    const recipient = await emailNotificationService.addExtraRecipient(
+      app,
+      request.user.id,
+      request.params.zoneId,
+      parsed.data.email,
+    )
+    return { recipient }
+  })
+
+  app.delete('/api/zones/:zoneId/notifications/recipients/:recipientId', async (request) => {
+    await emailNotificationService.removeExtraRecipient(
+      app,
+      request.user.id,
+      request.params.zoneId,
+      request.params.recipientId,
+    )
+    return { ok: true }
+  })
+
+  app.post('/api/zones/:zoneId/notifications/test', async (request) => {
+    return emailNotificationService.sendTestEmail(app, request.user.id, request.params.zoneId)
   })
 }

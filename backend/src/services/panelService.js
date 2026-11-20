@@ -33,6 +33,7 @@ import {
   updateZoneSettings,
 } from '../repos/zones.js'
 import { raiseAlert } from './alertService.js'
+import { sendDeviceOfflineEmail } from './tankEmailNotifier.js'
 import { publishToNodeRed } from './nodered.js'
 
 function num(value) {
@@ -138,6 +139,7 @@ function mapSettings(settings) {
     maxIrrigationSeconds: settings.max_irrigation_seconds,
     mode: settings.mode,
     tankMinPct: num(settings.tank_min_pct),
+    tankAlertLowPct: num(settings.tank_alert_low_pct),
     batteryMinPct: num(settings.battery_min_pct),
     allowManualOnBattery: Boolean(settings.allow_manual_on_battery),
     updatedAt: settings.updated_at,
@@ -631,6 +633,7 @@ export async function runOfflineWatcher(app) {
       severity: 'warning',
       message: `El dispositivo ${device.name} no envía lecturas.`,
     })
+    await sendDeviceOfflineEmail(app, device)
   }
   return stale.length
 }
