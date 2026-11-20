@@ -24,7 +24,7 @@ export async function getDeviceForUser(db, deviceId, userId) {
             z.name AS zone_name, g.user_id, g.id AS garden_id
      FROM devices d
      INNER JOIN device_ownerships ow ON ow.device_id = d.id AND ow.unclaimed_at IS NULL
-     INNER JOIN zones z ON z.id = ow.zone_id
+     INNER JOIN zones z ON z.id = d.zone_id
      INNER JOIN gardens g ON g.id = z.garden_id
      WHERE d.id = $1 AND g.user_id = $2`,
     [deviceId, userId],

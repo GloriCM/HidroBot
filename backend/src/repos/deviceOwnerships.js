@@ -44,15 +44,39 @@ export async function closeOwnership(db, ownershipId, unclaimedAt = new Date()) 
  */
 export async function listActiveDevicesForUser(db, userId) {
   const result = await db.query(
-    `SELECT d.id, d.name, d.mqtt_id, d.mac, d.online, d.firmware_version,
-            d.last_seen_at, d.last_source, d.last_pump, d.created_at,
+    `SELECT d.id, COALESCE(ow.device_name, d.name) AS name, d.mqtt_id, d.mac, d.online,
+            d.firmware_version, d.last_seen_at, d.last_source, d.last_pump, d.created_at,
             ow.id AS ownership_id, ow.claimed_at,
             z.id AS zone_id, z.name AS zone_name, g.id AS garden_id, g.name AS garden_name
      FROM device_ownerships ow
      INNER JOIN devices d ON d.id = ow.device_id
-     INNER JOIN zones z ON z.id = ow.zone_id
+     INNER JOIN zones z ON z.id = d.zone_id
      INNER JOIN gardens g ON g.id = z.garden_id
-     WHERE ow.unclaimed_at IS NULL AND g.user_id = $1
+     WHERE ow.unclaimed_at IS NULL AND ow.user_id = $1 AND d.zone_id IS NOT NULL
+     ORDER BY name`,
+    [userId],
+  )
+  return result.rows
+}
+
+/**
+ * Dispositivos reclamados en zonas del usuario sin fila de ownership activa (datos legacy).
+ * @param {import('pg').Pool | import('pg').PoolClient} db
+ */
+export async function listLegacyClaimedDevicesForUser(db, userId) {
+  const result = await db.query(
+    `SELECT d.id, d.name, d.mqtt_id, d.mac, d.online, d.firmware_version,
+            d.last_seen_at, d.last_source, d.last_pump, d.created_at,
+            NULL::uuid AS ownership_id, d.created_at AS claimed_at,
+            z.id AS zone_id, z.name AS zone_name, g.id AS garden_id, g.name AS garden_name
+     FROM devices d
+     INNER JOIN zones z ON z.id = d.zone_id
+     INNER JOIN gardens g ON g.id = z.garden_id
+     LEFT JOIN device_ownerships ow ON ow.device_id = d.id AND ow.unclaimed_at IS NULL
+     WHERE g.user_id = $1
+       AND d.ownership_status = 'claimed'
+       AND d.zone_id IS NOT NULL
+       AND ow.id IS NULL
      ORDER BY d.name`,
     [userId],
   )

@@ -640,7 +640,10 @@ export default function Dashboard() {
   async function loadDevices() {
     try {
       const data = await api.listDevices()
-      setDevicesList(data)
+      setDevicesList({
+        devices: Array.isArray(data?.devices) ? data.devices : [],
+        previous: Array.isArray(data?.previous) ? data.previous : [],
+      })
     } catch (err) {
       setActionError(err.message)
     }

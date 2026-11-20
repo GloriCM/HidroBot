@@ -255,27 +255,36 @@ export async function patchDeviceForUser(app, userId, deviceId, { name }) {
   return { id: deviceId, name: updated.name }
 }
 
-export async function listDevices(app, userId) {
-  const { listActiveDevicesForUser, listPastOwnershipsForUser } = await import(
-    '../repos/deviceOwnerships.js'
-  )
-  const active = await listActiveDevicesForUser(app.db, userId)
-  const past = await listPastOwnershipsForUser(app.db, userId)
-  const offlineMin = app.config.DEVICE_OFFLINE_MINUTES
+function mapDeviceListRow(row, offlineMin) {
   return {
-    devices: active.map((row) => ({
-      id: row.id,
-      name: row.name,
-      mqttId: row.mqtt_id,
-      firmwareVersion: row.firmware_version,
-      online: isDeviceOnline(row, offlineMin),
-      lastSeenAt: row.last_seen_at,
-      zoneId: row.zone_id,
-      zoneName: row.zone_name,
-      gardenId: row.garden_id,
-      gardenName: row.garden_name,
-      ownershipId: row.ownership_id,
-    })),
+    id: row.id,
+    name: row.name,
+    mqttId: row.mqtt_id,
+    firmwareVersion: row.firmware_version,
+    online: isDeviceOnline(row, offlineMin),
+    lastSeenAt: row.last_seen_at,
+    zoneId: row.zone_id,
+    zoneName: row.zone_name,
+    gardenId: row.garden_id,
+    gardenName: row.garden_name,
+    ownershipId: row.ownership_id,
+  }
+}
+
+export async function listDevices(app, userId) {
+  const {
+    listActiveDevicesForUser,
+    listLegacyClaimedDevicesForUser,
+    listPastOwnershipsForUser,
+  } = await import('../repos/deviceOwnerships.js')
+  const active = await listActiveDevicesForUser(app.db, userId)
+  const legacy = await listLegacyClaimedDevicesForUser(app.db, userId)
+  const seen = new Set(active.map((row) => row.id))
+  const merged = [...active, ...legacy.filter((row) => !seen.has(row.id))]
+  const past = await listPastOwnershipsForUser(app.db, userId)
+  const offlineMin = Number(app.config.DEVICE_OFFLINE_MINUTES ?? 15)
+  return {
+    devices: merged.map((row) => mapDeviceListRow(row, offlineMin)),
     previous: past.map((row) => ({
       ownershipId: row.id,
       deviceId: row.device_id,
