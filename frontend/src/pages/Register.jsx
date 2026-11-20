@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import Gate from '../components/Gate'
 import SetupStepBubbles from '../components/SetupStepBubbles'
+import { markOnboardingStart } from '../lib/onboarding'
 import { useAuth } from '../hooks/useAuth'
 
 const empty = {
@@ -64,6 +65,7 @@ export default function Register() {
         password: form.password,
         garden: form.garden,
       })
+      markOnboardingStart()
       navigate('/panel?bienvenida=1')
     } catch (err) {
       setError(err.message || 'No se pudo crear la cuenta.')

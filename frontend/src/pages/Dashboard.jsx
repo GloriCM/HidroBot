@@ -20,6 +20,7 @@ import PanelChrome from '../components/panel/PanelChrome'
 import { BtnPrimary, BtnSecondary, PageHeader, PanelCard, StatusBanner, StatCard } from '../components/panel/ui'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
+import { ONBOARDING_START_KEY } from '../lib/onboarding'
 import { moistureState } from '../lib/moisture'
 import {
   isTankCalibrated,
@@ -287,6 +288,7 @@ export default function Dashboard() {
   const settingsDirtyRef = useRef(false)
   const calDirtyRef = useRef(false)
   const summaryRef = useRef(emptySummary)
+  const onboardingStartHandledRef = useRef(false)
 
   const syncFormsFrom = useCallback((data) => {
     if (!data) return
@@ -433,19 +435,44 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!user?.id || !ready) return
-    if (searchParams.get('bienvenida') === '1') {
+
+    let shouldStart = searchParams.get('bienvenida') === '1'
+    if (shouldStart) {
+      setSearchParams({}, { replace: true })
+    }
+    try {
+      if (sessionStorage.getItem(ONBOARDING_START_KEY) === '1') {
+        shouldStart = true
+        sessionStorage.removeItem(ONBOARDING_START_KEY)
+      }
+    } catch {
+      /* ignore */
+    }
+
+    if (shouldStart && !onboardingStartHandledRef.current) {
+      onboardingStartHandledRef.current = true
       setOnboardingOpen(true)
       setOnboardingStep(0)
-      setSearchParams({}, { replace: true })
+      setShowResumeOnboarding(false)
       return
     }
+
     const done = localStorage.getItem(onboardingDoneKey(user.id)) === '1'
     const needsSetup =
       !summary.device ||
       !isTankCalibrated(summary.calibration ?? calDraft) ||
       !isSoilCalibrated(summary.calibration ?? calDraft)
-    setShowResumeOnboarding(!done && needsSetup)
-  }, [user?.id, ready, searchParams, setSearchParams, summary.device, summary.calibration, calDraft])
+    setShowResumeOnboarding(!done && needsSetup && !onboardingOpen)
+  }, [
+    user?.id,
+    ready,
+    searchParams,
+    setSearchParams,
+    summary.device,
+    summary.calibration,
+    calDraft,
+    onboardingOpen,
+  ])
 
   useEffect(() => {
     if (!user) return
@@ -985,6 +1012,7 @@ export default function Dashboard() {
   }
 
   return (
+    <>
     <PanelChrome
       section={section}
       onSection={setSection}
@@ -1053,7 +1081,7 @@ export default function Dashboard() {
           {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
           {loading ? <StatusBanner tone="info">Actualizando datos del jardín…</StatusBanner> : null}
 
-          {isSection('inicio') && showResumeOnboarding ? (
+          {isSection('inicio') && showResumeOnboarding && !onboardingOpen ? (
             <PanelCard className="mb-4 flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50/80 p-4">
               <p className="text-sm font-medium text-emerald-950">
                 Aún no has terminado la configuración inicial (vincular y calibrar).
@@ -1585,6 +1613,7 @@ export default function Dashboard() {
           </section>
         </div>
       )}
+    </PanelChrome>
 
       <OnboardingWizard
         open={onboardingOpen}
@@ -1664,6 +1693,6 @@ export default function Dashboard() {
         onSaveDry={() => captureSoil('dry')}
         onSaveWet={() => captureSoil('wet')}
       />
-    </PanelChrome>
+    </>
   )
 }
