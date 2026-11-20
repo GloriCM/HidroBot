@@ -5,6 +5,7 @@ import {
   assessDistanceStability,
   medianOf,
   stableMedianFromReadings,
+  tankStepLiveValidation,
   validateTankDistancePair,
   TANK_HC_SR04_MIN_FULL_CM,
   TANK_MIN_EMPTY_FULL_DIFF_CM,
@@ -35,6 +36,12 @@ test('validación tanque: lleno < vacío, mínimo 5 cm y lleno ≥ 3 cm', () => 
   assert.notEqual(validateTankDistancePair(10, 9), null)
   assert.notEqual(validateTankDistancePair(10, 12), null)
   assert.ok(validateTankDistancePair(10, 12).includes(String(TANK_MIN_EMPTY_FULL_DIFF_CM)))
+})
+
+test('validación en vivo del asistente', () => {
+  assert.match(tankStepLiveValidation(1, 4, null).message, /zona ciega/i)
+  assert.match(tankStepLiveValidation(2, 38, 40).message, /Llena más el tanque/i)
+  assert.equal(tankStepLiveValidation(1, 25, null).ok, true)
 })
 
 test('porcentaje tanque con calibración', () => {

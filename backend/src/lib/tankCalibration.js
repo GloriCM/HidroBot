@@ -4,6 +4,39 @@ export const TANK_HC_SR04_MIN_FULL_CM = 3
 export const TANK_MIN_EMPTY_FULL_DIFF_CM = 5
 export const TANK_UNSTABLE_READING_SPREAD_CM = 2
 export const TANK_MEDIAN_SAMPLE_SIZE = 5
+export const TANK_BLIND_ZONE_LIVE_CM = 5
+export const TANK_NO_READING_MS = 30_000
+
+export function isTankCalibrated(cal) {
+  const full = Number(cal?.distance_full_cm ?? cal?.distanceFullCm)
+  const empty = Number(cal?.distance_empty_cm ?? cal?.distanceEmptyCm)
+  return validateTankDistancePair(full, empty) === null
+}
+
+export function tankStepLiveValidation(step, liveDistanceCm, emptyCm) {
+  if (liveDistanceCm == null || !Number.isFinite(liveDistanceCm)) {
+    return {
+      ok: false,
+      message: 'El sensor no responde: revisa los cables del ultrasónico.',
+    }
+  }
+  if (liveDistanceCm < TANK_BLIND_ZONE_LIVE_CM) {
+    return {
+      ok: false,
+      message:
+        'El agua está demasiado cerca del sensor (zona ciega). Baja el nivel o sube el sensor.',
+    }
+  }
+  if (step === 2 && Number.isFinite(emptyCm)) {
+    if (liveDistanceCm >= emptyCm || emptyCm - liveDistanceCm < TANK_MIN_EMPTY_FULL_DIFF_CM) {
+      return {
+        ok: false,
+        message: `Llena más el tanque: la distancia debe ser menor que la de vacío (${emptyCm} cm).`,
+      }
+    }
+  }
+  return { ok: true, message: '' }
+}
 
 /**
  * @param {number[]} values

@@ -19,12 +19,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 import HistoryChart from '../components/HistoryChart'
+import SoilCalibrationWizard from '../components/SoilCalibrationWizard'
+import TankCalibrationWizard from '../components/TankCalibrationWizard'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
 import { moistureState } from '../lib/moisture'
 import {
+  isTankCalibrated,
   stableMedianFromReadings,
-  tankPctFromDistance,
   TANK_MEDIAN_SAMPLE_SIZE,
   validateTankDistancePair,
 } from '../lib/tankCalibration'
@@ -100,7 +102,39 @@ function calibrationFromSummary(data) {
     distanceEmptyCm: data.calibration?.distanceEmptyCm ?? 40,
     batteryVEmpty: data.calibration?.batteryVEmpty ?? 9,
     batteryVFull: data.calibration?.batteryVFull ?? 12.6,
+    updatedAt: data.calibration?.updatedAt ?? null,
   }
+}
+
+function calibrationFromApi(cal) {
+  if (!cal) return calibrationFromSummary({ calibration: null })
+  return {
+    humidityRawDry: cal.humidityRawDry ?? 3000,
+    humidityRawWet: cal.humidityRawWet ?? 1200,
+    distanceFullCm: cal.distanceFullCm ?? 5,
+    distanceEmptyCm: cal.distanceEmptyCm ?? 40,
+    batteryVEmpty: cal.batteryVEmpty ?? 9,
+    batteryVFull: cal.batteryVFull ?? 12.6,
+    updatedAt: cal.updatedAt ?? null,
+  }
+}
+
+function formatCalDate(iso) {
+  if (!iso) return '—'
+  try {
+    return new Date(iso).toLocaleString('es-CO', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+  } catch {
+    return '—'
+  }
+}
+
+function isSoilCalibrated(cal) {
+  const dry = Number(cal?.humidityRawDry)
+  const wet = Number(cal?.humidityRawWet)
+  return Number.isFinite(dry) && Number.isFinite(wet) && dry > wet
 }
 
 function sameSettings(a, b) {
@@ -213,8 +247,17 @@ export default function Dashboard() {
   const [calDraft, setCalDraft] = useState({})
   const [settingsBaseline, setSettingsBaseline] = useState(null)
   const [calBaseline, setCalBaseline] = useState(null)
+  const [tankWizardOpen, setTankWizardOpen] = useState(false)
+  const [soilWizardOpen, setSoilWizardOpen] = useState(false)
   const [tankWizardStep, setTankWizardStep] = useState(1)
-  const distanceSamplesRef = useRef([])
+  const [soilWizardStep, setSoilWizardStep] = useState(1)
+  const [advancedCalOpen, setAdvancedCalOpen] = useState(false)
+  const [calDeviceId, setCalDeviceId] = useState('')
+  const [calDeviceCal, setCalDeviceCal] = useState(() => calibrationFromSummary({ calibration: null }))
+  const [tankSamples, setTankSamples] = useState([])
+  const [liveDeviceTelemetry, setLiveDeviceTelemetry] = useState({ distanceCm: null, humidityRaw: null, at: null })
+  const [wizardSavedEmpty, setWizardSavedEmpty] = useState(false)
+  const [wizardSavedFull, setWizardSavedFull] = useState(false)
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
   const [profileNote, setProfileNote] = useState('')
   const [profileError, setProfileError] = useState('')
@@ -304,23 +347,53 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (section !== 'sistema') return
-    const full = parseLocaleNumber(calDraft.distanceFullCm)
-    const empty = parseLocaleNumber(calDraft.distanceEmptyCm)
-    if (validateTankDistancePair(full, empty) === null) {
-      setTankWizardStep(3)
-    }
-  }, [section, calDraft.distanceFullCm, calDraft.distanceEmptyCm])
+    void loadDevices()
+  }, [section])
 
   useEffect(() => {
-    if (section !== 'sistema') return
+    if (!calDeviceId || (!tankWizardOpen && !soilWizardOpen)) return undefined
+    const pull = async () => {
+      try {
+        const data = await api.telemetry(calDeviceId, '1h')
+        const series = data.series || []
+        const last = series[series.length - 1]
+        if (!last) return
+        const at = last.t ?? Date.now()
+        setLiveDeviceTelemetry({
+          distanceCm: last.distanceCm ?? null,
+          humidityRaw: last.humidityRaw ?? null,
+          at,
+        })
+        if (tankWizardOpen && last.distanceCm != null) {
+          setTankSamples((prev) => {
+            if (prev.length && prev[prev.length - 1].at === at) return prev
+            return [...prev, { value: last.distanceCm, at }].slice(-30)
+          })
+        }
+      } catch {
+        /* telemetría opcional */
+      }
+    }
+    void pull()
+    const id = setInterval(pull, 10_000)
+    return () => clearInterval(id)
+  }, [calDeviceId, tankWizardOpen, soilWizardOpen])
+
+  useEffect(() => {
+    if (!tankWizardOpen || !summary.device?.id || calDeviceId !== summary.device.id) return
     const d = summary.latest?.distanceCm
     const at = summary.latest?.recordedAt
     if (d == null || !Number.isFinite(d)) return
-    const buf = distanceSamplesRef.current
-    if (buf.length && buf[buf.length - 1].at === at) return
-    buf.push({ value: d, at: at ?? Date.now() })
-    while (buf.length > 30) buf.shift()
-  }, [section, summary.latest?.distanceCm, summary.latest?.recordedAt])
+    setLiveDeviceTelemetry((prev) => ({
+      ...prev,
+      distanceCm: d,
+      at: at ?? prev.at,
+    }))
+    setTankSamples((prev) => {
+      if (prev.length && prev[prev.length - 1].at === at) return prev
+      return [...prev, { value: d, at: at ?? Date.now() }].slice(-30)
+    })
+  }, [tankWizardOpen, calDeviceId, summary.device?.id, summary.latest?.distanceCm, summary.latest?.recordedAt])
 
   useEffect(() => {
     if (section !== 'sistema') return
@@ -369,14 +442,29 @@ export default function Dashboard() {
   const watch = summary.settings?.watchPct ?? 55
   const auto = (settingsDraft.mode || summary.settings?.mode) !== 'manual'
   const online = summary.online
-  const liveDistance = summary.latest?.distanceCm
-  const distancePreview = stableMedianFromReadings(
-    distanceSamplesRef.current.map((s) => s.value),
-    TANK_MEDIAN_SAMPLE_SIZE,
-  )
-  const liveTankPct =
-    liveDistance != null ? tankPctFromDistance(liveDistance, calDraft) : null
   const pump = summary.pump
+  const cardTankCal = summary.calibration ?? calDraft
+  const tankCalibrated = isTankCalibrated(cardTankCal)
+  const soilCalibrated = isSoilCalibrated(cardTankCal)
+  const calDisplayDevice =
+    devicesList.devices?.find((d) => d.id === summary.device?.id) ?? summary.device
+  const wizardLiveDistance =
+    calDeviceId === summary.device?.id
+      ? summary.latest?.distanceCm ?? liveDeviceTelemetry.distanceCm
+      : liveDeviceTelemetry.distanceCm
+  const wizardLiveRaw =
+    calDeviceId === summary.device?.id
+      ? summary.latest?.humidityRaw ?? liveDeviceTelemetry.humidityRaw
+      : liveDeviceTelemetry.humidityRaw
+  const wizardDeviceMeta =
+    devicesList.devices?.find((d) => d.id === calDeviceId) ||
+    (summary.device?.id === calDeviceId
+      ? { id: summary.device.id, name: summary.device.name, mqttId: summary.device.mqttId }
+      : null)
+  const tankCanAdvance =
+    (tankWizardStep === 1 && wizardSavedEmpty) ||
+    (tankWizardStep === 2 && wizardSavedFull) ||
+    tankWizardStep >= 3
   const onBattery = summary.onBattery
   const settingsDirty = Boolean(settingsBaseline) && !sameSettings(settingsDraft, settingsBaseline)
   const calDirty = Boolean(calBaseline) && !sameCalibration(calDraft, calBaseline)
@@ -532,23 +620,20 @@ export default function Dashboard() {
   async function saveCalibration(event) {
     event.preventDefault()
     if (!summary.device?.id || busy) return
-    const invalid = validateCalibrationDraft(calDraft)
-    if (invalid) {
-      setActionError(invalid)
+    const v0 = parseLocaleNumber(calDraft.batteryVEmpty)
+    const v1 = parseLocaleNumber(calDraft.batteryVFull)
+    if (!Number.isFinite(v0) || !Number.isFinite(v1) || v1 <= v0) {
+      setActionError('Revisa los voltajes de batería (lleno debe ser mayor que vacío).')
       return
     }
     setBusy(true)
     setActionError('')
     try {
       await api.patchCalibration(summary.device.id, {
-        humidityRawDry: Math.round(parseLocaleNumber(calDraft.humidityRawDry)),
-        humidityRawWet: Math.round(parseLocaleNumber(calDraft.humidityRawWet)),
-        distanceFullCm: parseLocaleNumber(calDraft.distanceFullCm),
-        distanceEmptyCm: parseLocaleNumber(calDraft.distanceEmptyCm),
-        batteryVEmpty: parseLocaleNumber(calDraft.batteryVEmpty),
-        batteryVFull: parseLocaleNumber(calDraft.batteryVFull),
+        batteryVEmpty: v0,
+        batteryVFull: v1,
       })
-      setActionNote('Calibración guardada.')
+      setActionNote('Calibración de batería guardada.')
       await loadSummary({ syncForms: true })
     } catch (err) {
       setActionError(err.message)
@@ -557,42 +642,85 @@ export default function Dashboard() {
     }
   }
 
-  async function captureTankLevel(kind) {
-    if (!summary.device?.id || busy) return
-    const values = distanceSamplesRef.current.map((s) => s.value)
-    const { median, count, stability } = stableMedianFromReadings(values, TANK_MEDIAN_SAMPLE_SIZE)
-    if (median == null || count === 0) {
-      setActionError(
-        'Aún no hay lecturas válidas del ultrasonido. Deja el tanque quieto y espera unos segundos.',
-      )
+  async function loadCalibrationForDevice(deviceId) {
+    if (!deviceId) return
+    try {
+      const data = await api.getCalibration(deviceId)
+      setCalDeviceCal(calibrationFromApi(data.calibration))
+      if (deviceId === summary.device?.id) {
+        const next = calibrationFromApi(data.calibration)
+        setCalDraft(next)
+        setCalBaseline(next)
+      }
+    } catch (err) {
+      setActionError(err.message)
+    }
+  }
+
+  function pickCalDeviceId() {
+    return summary.device?.id || devicesList.devices?.[0]?.id || ''
+  }
+
+  async function openTankWizard() {
+    const id = pickCalDeviceId()
+    if (!id) {
+      setActionError('No hay dispositivo vinculado para calibrar.')
       return
     }
+    setCalDeviceId(id)
+    setTankWizardStep(1)
+    setWizardSavedEmpty(false)
+    setWizardSavedFull(false)
+    setTankSamples([])
+    setTankWizardOpen(true)
+    await loadCalibrationForDevice(id)
+  }
+
+  async function openSoilWizard() {
+    const id = pickCalDeviceId()
+    if (!id) {
+      setActionError('No hay dispositivo vinculado para calibrar.')
+      return
+    }
+    setCalDeviceId(id)
+    setSoilWizardStep(1)
+    setSoilWizardOpen(true)
+    await loadCalibrationForDevice(id)
+  }
+
+  async function captureTankLevel(kind) {
+    if (!calDeviceId || busy) return
+    const values = tankSamples.map((s) => s.value)
+    const { median, count, stability } = stableMedianFromReadings(values, TANK_MEDIAN_SAMPLE_SIZE)
+    if (median == null || count < TANK_MEDIAN_SAMPLE_SIZE || stability.unstable) return
     const key = kind === 'empty' ? 'distanceEmptyCm' : 'distanceFullCm'
     const full =
-      kind === 'full' ? median : parseLocaleNumber(calDraft.distanceFullCm)
+      kind === 'full' ? median : parseLocaleNumber(calDeviceCal.distanceFullCm)
     const empty =
-      kind === 'empty' ? median : parseLocaleNumber(calDraft.distanceEmptyCm)
+      kind === 'empty' ? median : parseLocaleNumber(calDeviceCal.distanceEmptyCm)
     const tankErr = validateTankDistancePair(full, empty)
-    if (tankErr) {
-      setActionError(tankErr)
-      return
-    }
-    const nextDraft = { ...calDraft, [key]: Math.round(median * 10) / 10 }
+    if (tankErr) return
+    const nextCal = { ...calDeviceCal, [key]: Math.round(median * 10) / 10 }
     setBusy(true)
     setActionError('')
-    setCalDraft(nextDraft)
     try {
-      await api.patchCalibration(summary.device.id, {
-        [key]: nextDraft[key],
-      })
-      setCalBaseline((current) => ({ ...(current || nextDraft), [key]: nextDraft[key] }))
-      const label = kind === 'empty' ? 'vacío' : 'lleno'
-      let note = `Tanque ${label}: mediana ${median.toFixed(1)} cm con ${count} lectura${count === 1 ? '' : 's'}.`
-      if (stability.unstable) {
-        note += ` Aviso: las lecturas varían ${stability.spread.toFixed(1)} cm (rebotes en las paredes u ondas).`
+      await api.patchCalibration(calDeviceId, { [key]: nextCal[key] })
+      setCalDeviceCal(nextCal)
+      if (calDeviceId === summary.device?.id) {
+        setCalDraft((c) => ({ ...c, [key]: nextCal[key] }))
+        setCalBaseline((c) => ({ ...c, [key]: nextCal[key] }))
       }
-      setActionNote(note)
-      setTankWizardStep(kind === 'empty' ? 2 : 3)
+      setActionNote(
+        `Tanque ${kind === 'empty' ? 'vacío' : 'lleno'}: mediana ${median.toFixed(1)} cm (${count} lecturas).`,
+      )
+      if (kind === 'empty') {
+        setWizardSavedEmpty(true)
+        setTankWizardStep(2)
+        setTankSamples([])
+      } else {
+        setWizardSavedFull(true)
+        setTankWizardStep(3)
+      }
       await loadSummary({ syncForms: false })
     } catch (err) {
       setActionError(err.message)
@@ -602,33 +730,36 @@ export default function Dashboard() {
   }
 
   async function captureSoil(kind) {
-    if (!summary.device?.id || busy) return
-    const raw = summary.latest?.humidityRaw
+    if (!calDeviceId || busy) return
+    const raw =
+      calDeviceId === summary.device?.id
+        ? summary.latest?.humidityRaw ?? liveDeviceTelemetry.humidityRaw
+        : liveDeviceTelemetry.humidityRaw
     if (raw == null) {
-      setActionError('Aún no hay humedad_raw del sensor.')
+      setActionError('Aún no hay lectura de humedad del sensor.')
       return
     }
     const key = kind === 'dry' ? 'humidityRawDry' : 'humidityRawWet'
-    const nextDraft = { ...calDraft, [key]: raw }
-    // Valida el par seco/mojado con el nuevo valor antes de guardar.
-    const invalid = validateCalibrationDraft(nextDraft)
+    const nextCal = { ...calDeviceCal, [key]: raw }
+    const invalid = validateCalibrationDraft(nextCal)
     if (invalid) {
-      setCalDraft(nextDraft)
       setActionError(invalid)
       return
     }
     setBusy(true)
     setActionError('')
-    setCalDraft(nextDraft)
     try {
-      await api.patchCalibration(summary.device.id, { [key]: Number(raw) })
-      setCalBaseline((current) => ({ ...(current || nextDraft), [key]: raw }))
+      await api.patchCalibration(calDeviceId, { [key]: Number(raw) })
+      setCalDeviceCal(nextCal)
+      if (calDeviceId === summary.device?.id) {
+        setCalDraft(nextCal)
+        setCalBaseline((c) => ({ ...c, [key]: raw }))
+      }
       setActionNote(
-        kind === 'dry'
-          ? `Seco guardado como ${raw} (última lectura).`
-          : `Mojado guardado como ${raw} (última lectura).`,
+        kind === 'dry' ? `Seco guardado: ${raw}.` : `Mojado guardado: ${raw}.`,
       )
-      // Actualiza telemetría/servidor sin pisar otros campos del borrador.
+      if (kind === 'dry') setSoilWizardStep(2)
+      else setSoilWizardOpen(false)
       await loadSummary({ syncForms: false })
     } catch (err) {
       setActionError(err.message)
@@ -1017,122 +1148,102 @@ export default function Dashboard() {
                           <button className="h-11 rounded-xl bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] font-extrabold text-white" type="submit" disabled={busy}>Guardar ajustes</button>
                         </form>
 
-                        <form className="mt-5 grid gap-2 border-t border-[#e7eef3] pt-4" onSubmit={saveCalibration}>
+                        <div className="mt-5 grid gap-3 border-t border-[#e7eef3] pt-4">
                           <h3 className="font-extrabold">Calibraciones</h3>
 
-                          <div className="rounded-2xl border border-[#d7e3ee] bg-white/70 p-3">
-                            <h4 className="font-extrabold text-[#0a3d6b]">Tanque (3 pasos)</h4>
-                            <p className="mt-1 text-xs font-semibold text-[#6b8494]">
-                              Distancia en vivo:{' '}
-                              <b>{liveDistance == null ? '—' : `${liveDistance} cm`}</b>
-                              {distancePreview.count > 0 ? (
-                                <span>
-                                  {' '}
-                                  · mediana previa ({distancePreview.count} lect.):{' '}
-                                  {distancePreview.median?.toFixed(1)} cm
-                                </span>
-                              ) : null}
-                            </p>
-
-                            {tankWizardStep === 1 && (
-                              <div className="mt-3 grid gap-2 text-sm">
-                                <p className="font-bold text-[#0a3d6b]">Paso 1 · Tanque vacío</p>
-                                <p className="text-xs text-[#6b8494]">
-                                  Deja el tanque en el nivel mínimo útil: donde la bomba ya no alcanza a tomar agua.
-                                  El líquido debe estar quieto unos segundos.
+                          <div className="rounded-2xl border border-[#d7e3ee] bg-white/75 p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <h4 className="text-base font-extrabold text-[#0a3d6b]">Calibrar tanque</h4>
+                                <p className="mt-1 text-xs font-semibold text-[#6b8494]">
+                                  {calDisplayDevice
+                                    ? `${calDisplayDevice.name ?? summary.device?.name} · ${calDisplayDevice.mqttId ?? summary.device?.mqttId}`
+                                    : 'Sin dispositivo en la zona'}
                                 </p>
-                                <button
-                                  type="button"
-                                  className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold"
-                                  disabled={busy || distancePreview.count === 0}
-                                  onClick={() => { void captureTankLevel('empty') }}
-                                >
-                                  Guardar como vacío
-                                </button>
                               </div>
-                            )}
-
-                            {tankWizardStep === 2 && (
-                              <div className="mt-3 grid gap-2 text-sm">
-                                <p className="font-bold text-[#0a3d6b]">Paso 2 · Tanque lleno</p>
-                                <p className="text-xs text-[#6b8494]">
-                                  Llena hasta el nivel máximo de uso, al menos 5 cm por debajo del sensor HC-SR04.
-                                </p>
-                                <p className="text-xs text-[#6b8494]">
-                                  Vacío calibrado: <b>{calDraft.distanceEmptyCm} cm</b>
-                                </p>
-                                <button
-                                  type="button"
-                                  className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold"
-                                  disabled={busy || distancePreview.count === 0}
-                                  onClick={() => { void captureTankLevel('full') }}
-                                >
-                                  Guardar como lleno
-                                </button>
-                              </div>
-                            )}
-
-                            {tankWizardStep === 3 && (
-                              <div className="mt-3 grid gap-2 text-sm">
-                                <p className="font-bold text-[#0a3d6b]">Paso 3 · Comprobar</p>
-                                <p className="text-xs text-[#6b8494]">
-                                  Lleno <b>{calDraft.distanceFullCm} cm</b> · Vacío{' '}
-                                  <b>{calDraft.distanceEmptyCm} cm</b>
-                                </p>
-                                <p className="text-lg font-extrabold text-[#1f9d4a]">
-                                  Nivel calculado:{' '}
-                                  {liveTankPct == null ? '—' : `${liveTankPct.toFixed(1)} %`}
-                                </p>
-                                <div className="flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    className="h-9 rounded-xl border border-[#d7e3ee] px-3 text-xs font-bold"
-                                    disabled={busy}
-                                    onClick={() => setTankWizardStep(1)}
-                                  >
-                                    Repetir calibración
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-
-                            <div className="mt-2 flex gap-1">
-                              {[1, 2, 3].map((step) => (
-                                <span
-                                  key={step}
-                                  className={`h-1.5 flex-1 rounded-full ${tankWizardStep >= step ? 'bg-[#22c55e]' : 'bg-[#e7eef3]'}`}
-                                />
-                              ))}
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-extrabold ${tankCalibrated ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#fff4e5] text-[#9a5b00]'}`}
+                              >
+                                {tankCalibrated ? 'Calibrado' : 'Sin calibrar'}
+                              </span>
                             </div>
+                            <p className="mt-2 text-sm text-[#0a3d6b]">
+                              Vacío <b>{cardTankCal.distanceEmptyCm} cm</b> · Lleno{' '}
+                              <b>{cardTankCal.distanceFullCm} cm</b>
+                            </p>
+                            <p className="text-xs text-[#6b8494]">
+                              Última actualización: {formatCalDate(summary.calibration?.updatedAt)}
+                            </p>
+                            <button
+                              type="button"
+                              className="mt-3 h-12 w-full rounded-xl bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] text-sm font-extrabold text-white disabled:opacity-50"
+                              disabled={busy || !summary.device}
+                              onClick={() => { void openTankWizard() }}
+                            >
+                              Iniciar calibración
+                            </button>
                           </div>
 
-                          <p className="text-xs font-semibold text-[#6b8494]">
-                            Humedad de suelo: última cruda ({summary.latest?.humidityRaw ?? 'sin dato'}).
-                          </p>
-                          <div className="grid grid-cols-2 gap-2">
-                            <button type="button" className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold" disabled={busy} onClick={() => { void captureSoil('dry') }}>Guardar como seco</button>
-                            <button type="button" className="h-10 rounded-xl border border-[#d7e3ee] bg-white text-sm font-bold" disabled={busy} onClick={() => { void captureSoil('wet') }}>Guardar como mojado</button>
+                          <div className="rounded-2xl border border-[#d7e3ee] bg-white/75 p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <h4 className="text-base font-extrabold text-[#0a3d6b]">Calibrar sensor de suelo</h4>
+                                <p className="mt-1 text-sm text-[#0a3d6b]">
+                                  Seco <b>{cardTankCal.humidityRawDry}</b> · Mojado{' '}
+                                  <b>{cardTankCal.humidityRawWet}</b>
+                                </p>
+                              </div>
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-extrabold ${soilCalibrated ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#fff4e5] text-[#9a5b00]'}`}
+                              >
+                                {soilCalibrated ? 'Calibrado' : 'Sin calibrar'}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              className="mt-3 h-12 w-full rounded-xl border border-[#d7e3ee] bg-white text-sm font-extrabold text-[#0a3d6b] disabled:opacity-50"
+                              disabled={busy || !summary.device}
+                              onClick={() => { void openSoilWizard() }}
+                            >
+                              Iniciar calibración de suelo
+                            </button>
                           </div>
-                          {[
-                            ['humidityRawDry', 'Raw seco'],
-                            ['humidityRawWet', 'Raw mojado'],
-                            ['batteryVEmpty', 'V batería vacía'],
-                            ['batteryVFull', 'V batería llena'],
-                          ].map(([key, label]) => (
-                            <label key={key} className="block text-sm font-bold text-[#0a3d6b]">
-                              {label}
-                              <input
-                                className="mt-1 h-10 w-full rounded-xl border border-[#d7e3ee] bg-white px-3"
-                                type="text"
-                                inputMode="decimal"
-                                autoComplete="off"
-                                value={calDraft[key] ?? ''}
-                                onChange={(e) => setCalDraft((c) => ({ ...c, [key]: e.target.value }))}
-                              />
-                            </label>
-                          ))}
-                          <button className="h-11 rounded-xl border border-[#d7e3ee] bg-white font-extrabold text-[#0a3d6b]" type="submit" disabled={busy}>Guardar calibración</button>
-                        </form>
+
+                          <details
+                            className="rounded-2xl border border-[#d7e3ee] bg-white/70 p-3"
+                            open={advancedCalOpen}
+                            onToggle={(e) => setAdvancedCalOpen(e.target.open)}
+                          >
+                            <summary className="cursor-pointer text-sm font-extrabold text-[#0a3d6b]">
+                              Avanzado (batería)
+                            </summary>
+                            <form className="mt-3 grid gap-2" onSubmit={saveCalibration}>
+                              {[
+                                ['batteryVEmpty', 'V batería vacía'],
+                                ['batteryVFull', 'V batería llena'],
+                              ].map(([key, label]) => (
+                                <label key={key} className="block text-sm font-bold text-[#0a3d6b]">
+                                  {label}
+                                  <input
+                                    className="mt-1 h-10 w-full rounded-xl border border-[#d7e3ee] bg-white px-3"
+                                    type="text"
+                                    inputMode="decimal"
+                                    autoComplete="off"
+                                    value={calDraft[key] ?? ''}
+                                    onChange={(e) => setCalDraft((c) => ({ ...c, [key]: e.target.value }))}
+                                  />
+                                </label>
+                              ))}
+                              <button
+                                className="h-11 rounded-xl border border-[#d7e3ee] bg-white font-extrabold text-[#0a3d6b]"
+                                type="submit"
+                                disabled={busy}
+                              >
+                                Guardar batería
+                              </button>
+                            </form>
+                          </details>
+                        </div>
                       </>
                     )}
                     {actionError && <p className="mt-3 text-sm font-bold text-[#b42318]">{actionError}</p>}
@@ -1180,6 +1291,54 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+
+      <TankCalibrationWizard
+        open={tankWizardOpen}
+        onClose={() => setTankWizardOpen(false)}
+        step={tankWizardStep}
+        onStepChange={setTankWizardStep}
+        devices={devicesList.devices}
+        deviceId={calDeviceId}
+        deviceName={wizardDeviceMeta?.name ?? 'HidroBot'}
+        mqttId={wizardDeviceMeta?.mqttId ?? '—'}
+        onSelectDevice={(id) => {
+          setCalDeviceId(id)
+          setTankSamples([])
+          setWizardSavedEmpty(false)
+          setWizardSavedFull(false)
+          setTankWizardStep(1)
+          void loadCalibrationForDevice(id)
+        }}
+        calibration={calDeviceCal}
+        samples={tankSamples}
+        liveDistance={wizardLiveDistance}
+        lastSampleAt={
+          tankSamples.length ? tankSamples[tankSamples.length - 1].at : liveDeviceTelemetry.at
+        }
+        busy={busy}
+        onSaveEmpty={() => captureTankLevel('empty')}
+        onSaveFull={() => captureTankLevel('full')}
+        onRepeat={() => {
+          setTankWizardStep(1)
+          setWizardSavedEmpty(false)
+          setWizardSavedFull(false)
+          setTankSamples([])
+        }}
+        canAdvanceStep={tankCanAdvance}
+      />
+      <SoilCalibrationWizard
+        open={soilWizardOpen}
+        onClose={() => setSoilWizardOpen(false)}
+        step={soilWizardStep}
+        onStepChange={setSoilWizardStep}
+        deviceName={wizardDeviceMeta?.name ?? 'HidroBot'}
+        mqttId={wizardDeviceMeta?.mqttId ?? '—'}
+        liveRaw={wizardLiveRaw}
+        calibration={calDeviceCal}
+        busy={busy}
+        onSaveDry={() => captureSoil('dry')}
+        onSaveWet={() => captureSoil('wet')}
+      />
     </div>
   )
 }

@@ -183,6 +183,8 @@ function mapTelemetryPoint(row, { aggregated = false, intervalSeconds = null, ra
     source: row.source,
     pump: row.pump == null ? null : Boolean(row.pump),
     rssi: row.rssi == null ? null : Number(row.rssi),
+    distanceCm: round1(row.distance_cm),
+    humidityRaw: row.humidity_raw == null ? null : Number(row.humidity_raw),
     samples: row.samples == null ? 1 : Number(row.samples),
     aggregated: isAgg,
     rawLatest: Boolean(rawLatest),

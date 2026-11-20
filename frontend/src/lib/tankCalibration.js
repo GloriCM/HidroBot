@@ -48,6 +48,55 @@ export function validateTankDistancePair(fullCm, emptyCm) {
   return null
 }
 
+export const TANK_BLIND_ZONE_LIVE_CM = 5
+export const TANK_NO_READING_MS = 30_000
+
+export function isTankCalibrated(cal) {
+  const full = Number(cal?.distanceFullCm)
+  const empty = Number(cal?.distanceEmptyCm)
+  return validateTankDistancePair(full, empty) === null
+}
+
+/** Validación en vivo durante el asistente (mensajes amigables). */
+export function tankStepLiveValidation(step, liveDistanceCm, emptyCm) {
+  if (liveDistanceCm == null || !Number.isFinite(liveDistanceCm)) {
+    return {
+      ok: false,
+      message:
+        'El sensor no responde: revisa los cables del ultrasónico.',
+    }
+  }
+  if (liveDistanceCm < TANK_BLIND_ZONE_LIVE_CM) {
+    return {
+      ok: false,
+      message:
+        'El agua está demasiado cerca del sensor (zona ciega). Baja el nivel o sube el sensor.',
+    }
+  }
+  if (step === 2 && Number.isFinite(emptyCm)) {
+    if (liveDistanceCm >= emptyCm || emptyCm - liveDistanceCm < TANK_MIN_EMPTY_FULL_DIFF_CM) {
+      return {
+        ok: false,
+        message: `Llena más el tanque: la distancia debe ser menor que la de vacío (${emptyCm} cm).`,
+      }
+    }
+  }
+  return { ok: true, message: '' }
+}
+
+export function stabilityStatus(samples, stability, lastSampleAtMs, nowMs = Date.now()) {
+  if (samples.length === 0) {
+    return { key: 'none', label: 'Sin lectura' }
+  }
+  if (lastSampleAtMs != null && nowMs - lastSampleAtMs > TANK_NO_READING_MS) {
+    return { key: 'none', label: 'Sin lectura' }
+  }
+  if (stability.unstable) {
+    return { key: 'unstable', label: 'Variando' }
+  }
+  return { key: 'stable', label: 'Estable' }
+}
+
 export function tankPctFromDistance(distanceCm, cal) {
   const full = Number(cal.distanceFullCm)
   const empty = Number(cal.distanceEmptyCm)
