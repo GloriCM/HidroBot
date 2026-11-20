@@ -1,3 +1,5 @@
+import { formatApiErrorMessage } from './apiErrors.js'
+
 export class ApiError extends Error {
   /**
    * @param {string} message
@@ -42,7 +44,8 @@ async function request(path, options = {}) {
   }
 
   if (!response.ok) {
-    throw new ApiError(data?.error || 'No se pudo completar la solicitud.', response.status)
+    const serverMessage = data?.error || data?.message
+    throw new ApiError(formatApiErrorMessage(serverMessage, response.status), response.status)
   }
 
   return data

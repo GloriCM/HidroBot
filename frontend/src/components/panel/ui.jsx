@@ -81,19 +81,21 @@ export function BtnSecondary({ className = '', children, ...props }) {
   )
 }
 
-export function FieldLabel({ label, children, className = '' }) {
+export function FieldLabel({ label, hint, children, className = '', htmlFor }) {
   return (
-    <label className={`block text-sm font-semibold text-slate-700 ${className}`}>
-      {label}
-      <div className="mt-1.5">{children}</div>
+    <label htmlFor={htmlFor} className={`block ${className}`}>
+      <span className="block text-sm font-semibold text-slate-800">{label}</span>
+      {hint ? <span className="mt-0.5 block text-xs font-normal text-slate-500">{hint}</span> : null}
+      <div className="mt-2">{children}</div>
     </label>
   )
 }
 
-export function TextInput(props) {
+export function TextInput({ className = '', id, ...props }) {
   return (
     <input
-      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-slate-900 outline-none ring-emerald-500/30 placeholder:text-slate-400 focus:ring-2"
+      id={id}
+      className={`block h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 disabled:bg-slate-50 disabled:text-slate-500 ${className}`}
       {...props}
     />
   )

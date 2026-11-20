@@ -1,6 +1,6 @@
 import { Check, ChevronRight, X } from 'lucide-react'
 import SetupStepBubbles, { ONBOARDING_STEP_TITLES, onboardingProgressStep } from './SetupStepBubbles'
-import { BtnPrimary, BtnSecondary, PanelCard, TextInput } from './panel/ui'
+import { BtnPrimary, BtnSecondary, FieldLabel, PanelCard, StatusBanner, TextInput } from './panel/ui'
 
 export default function OnboardingWizard({
   open,
@@ -93,31 +93,43 @@ export default function OnboardingWizard({
                 Enciende el HidroBot conectado a Wi‑Fi. En la pantalla verás un código tipo{' '}
                 <span className="font-mono font-bold text-slate-800">ABC-123</span>.
               </p>
-              <label className="block text-sm font-semibold text-slate-700">
-                Código de vinculación
+              <FieldLabel
+                label="Código de vinculación"
+                hint="Copia las 6 letras y números de la pantalla OLED (con o sin guion)."
+                htmlFor="onboarding-claim-code"
+              >
                 <TextInput
-                  className="mt-1.5 font-mono text-lg tracking-widest"
-                  placeholder="XXX-XXX"
+                  id="onboarding-claim-code"
+                  className="font-mono text-lg tracking-[0.2em]"
+                  placeholder="ABC-123"
                   value={claimCode}
                   onChange={(e) => setClaimCode(e.target.value)}
                   disabled={claimBusy}
                   autoComplete="off"
+                  inputMode="text"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  aria-invalid={claimError ? true : undefined}
                 />
-              </label>
-              <label className="block text-sm font-semibold text-slate-700">
-                Nombre del dispositivo
+              </FieldLabel>
+              <FieldLabel
+                label="Nombre del dispositivo"
+                hint="Cómo quieres verlo en el panel (puedes cambiarlo después)."
+                htmlFor="onboarding-claim-name"
+              >
                 <TextInput
-                  className="mt-1.5"
+                  id="onboarding-claim-name"
                   placeholder="Mi HidroBot"
                   value={claimName}
                   onChange={(e) => setClaimName(e.target.value)}
                   disabled={claimBusy}
+                  maxLength={80}
                 />
-              </label>
+              </FieldLabel>
               {claimError ? (
-                <p className="text-sm font-medium text-red-700" role="alert">
+                <StatusBanner tone="error" className="mb-0" role="alert">
                   {claimError}
-                </p>
+                </StatusBanner>
               ) : null}
               {hasDevice ? (
                 <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">

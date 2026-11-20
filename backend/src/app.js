@@ -58,8 +58,17 @@ export async function buildApp({ config }) {
     if (status >= 500) {
       app.log.error({ err: error }, 'error no controlado')
     }
+
+    let message = error.message
+    if (status === 400 && (!message || message === 'Bad Request')) {
+      message = 'Solicitud incorrecta. Revisa los datos enviados.'
+    }
+    if (error.code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
+      message = 'No se pudo leer el formulario. Recarga la página e inténtalo de nuevo.'
+    }
+
     reply.code(status).send({
-      error: status >= 500 ? 'Error interno' : error.message,
+      error: status >= 500 ? 'Error interno' : message,
       code: error.code,
     })
   })

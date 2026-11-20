@@ -76,7 +76,20 @@ export async function panelRoutes(app) {
       name: z.string().min(1).max(80).optional(),
     })
     const parsed = schema.safeParse(request.body ?? {})
-    if (!parsed.success) throw new AppError(400, 'Datos inválidos')
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      const field = issue?.path?.[0]
+      if (field === 'code') {
+        throw new AppError(400, 'El código de vinculación no es válido. Debe tener al menos 5 caracteres.')
+      }
+      if (field === 'zoneId') {
+        throw new AppError(400, 'No se pudo identificar la zona. Recarga el panel e inténtalo de nuevo.')
+      }
+      if (field === 'name') {
+        throw new AppError(400, 'El nombre del dispositivo no es válido (máx. 80 caracteres).')
+      }
+      throw new AppError(400, 'Revisa el código y el nombre del dispositivo.')
+    }
     const ip = request.ip || request.headers['x-forwarded-for']?.split(',')[0]?.trim()
     const created = await deviceLinkService.claimDevice(app, request.user.id, {
       ...parsed.data,

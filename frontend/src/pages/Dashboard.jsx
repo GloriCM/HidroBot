@@ -20,6 +20,7 @@ import PanelChrome from '../components/panel/PanelChrome'
 import { BtnPrimary, BtnSecondary, PageHeader, PanelCard, StatusBanner, StatCard } from '../components/panel/ui'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
+import { validateClaimCodeInput } from '../lib/apiErrors'
 import { ONBOARDING_START_KEY } from '../lib/onboarding'
 import { moistureState } from '../lib/moisture'
 import {
@@ -962,6 +963,11 @@ export default function Dashboard() {
 
   async function claimDeviceForOnboarding() {
     if (!summary.zone?.id || busy) return
+    const codeProblem = validateClaimCodeInput(claimCode)
+    if (codeProblem) {
+      setOnboardingClaimError(codeProblem)
+      return
+    }
     setBusy(true)
     setOnboardingClaimError('')
     try {
