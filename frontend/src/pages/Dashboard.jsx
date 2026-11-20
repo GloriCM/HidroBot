@@ -1,26 +1,23 @@
 import {
   Bell,
-  Calendar,
   Camera,
   ChartColumn,
   Droplets,
   Gauge,
-  Home,
-  Info,
-  Leaf,
-  LogOut,
   Play,
-  Settings,
   Square,
   User,
   Zap,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router-dom'
+import OnboardingWizard from '../components/OnboardingWizard'
 import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 import HistoryChart from '../components/HistoryChart'
 import SoilCalibrationWizard from '../components/SoilCalibrationWizard'
 import TankCalibrationWizard from '../components/TankCalibrationWizard'
+import PanelChrome from '../components/panel/PanelChrome'
+import { BtnPrimary, BtnSecondary, PageHeader, PanelCard, StatusBanner, StatCard } from '../components/panel/ui'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
 import { moistureState } from '../lib/moisture'
@@ -31,16 +28,35 @@ import {
   validateTankDistancePair,
 } from '../lib/tankCalibration'
 
-const nav = [
-  { id: 'inicio', label: 'Inicio', icon: Home },
-  { id: 'dispositivos', label: 'Mis dispositivos', icon: Settings },
-  { id: 'historial', label: 'Historial', icon: ChartColumn },
-  { id: 'sistema', label: 'Configuración', icon: Settings },
-  { id: 'alertas', label: 'Alertas', icon: Bell },
-]
+const SECTION_COPY = {
+  inicio: {
+    title: 'Resumen',
+    description: 'Estado actual de humedad, tanque y riego.',
+  },
+  dispositivos: {
+    title: 'Dispositivos',
+    description: 'Vincula tu ESP32 y gestiona la propiedad.',
+  },
+  historial: {
+    title: 'Historial',
+    description: 'Gráficos de telemetría y riegos recientes.',
+  },
+  sistema: {
+    title: 'Ajustes',
+    description: 'Umbrales, notificaciones y calibración.',
+  },
+  alertas: {
+    title: 'Alertas',
+    description: 'Avisos del sistema en tu jardín.',
+  },
+}
 
 function photoKey(email) {
   return `hidrobot_photo_${email}`
+}
+
+function onboardingDoneKey(userId) {
+  return `hidrobot_onboarding_done_${userId}`
 }
 
 function readPhoto(email) {
@@ -64,9 +80,6 @@ const emptySummary = {
   pump: false,
   onBattery: false,
 }
-
-const glass =
-  'rounded-3xl border border-white/80 bg-[linear-gradient(165deg,rgba(255,255,255,0.72),rgba(255,255,255,0.38))] shadow-[0_16px_36px_rgba(16,40,30,0.12),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-2xl'
 
 function clientRangeMeta(rangeKey) {
   const hours = rangeKey === '1h' ? 1 : rangeKey === '6h' ? 6 : rangeKey === '12h' ? 12 : 24
@@ -222,6 +235,7 @@ function MiniChart({ data, dataKey, color }) {
 
 export default function Dashboard() {
   const { user, ready, logout, updateProfile, resetPassword } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [summary, setSummary] = useState(emptySummary)
   const [series, setSeries] = useState([])
   const [seriesMeta, setSeriesMeta] = useState(null)
@@ -264,6 +278,10 @@ export default function Dashboard() {
   const [profileTab, setProfileTab] = useState('datos')
   const [notifDraft, setNotifDraft] = useState(null)
   const [extraEmail, setExtraEmail] = useState('')
+  const [onboardingOpen, setOnboardingOpen] = useState(false)
+  const [onboardingStep, setOnboardingStep] = useState(0)
+  const [onboardingClaimError, setOnboardingClaimError] = useState('')
+  const [showResumeOnboarding, setShowResumeOnboarding] = useState(false)
   const menuRef = useRef(null)
   const formsHydratedRef = useRef(false)
   const settingsDirtyRef = useRef(false)
@@ -414,6 +432,22 @@ export default function Dashboard() {
   }, [section, summary.zone?.id])
 
   useEffect(() => {
+    if (!user?.id || !ready) return
+    if (searchParams.get('bienvenida') === '1') {
+      setOnboardingOpen(true)
+      setOnboardingStep(0)
+      setSearchParams({}, { replace: true })
+      return
+    }
+    const done = localStorage.getItem(onboardingDoneKey(user.id)) === '1'
+    const needsSetup =
+      !summary.device ||
+      !isTankCalibrated(summary.calibration ?? calDraft) ||
+      !isSoilCalibrated(summary.calibration ?? calDraft)
+    setShowResumeOnboarding(!done && needsSetup)
+  }, [user?.id, ready, searchParams, setSearchParams, summary.device, summary.calibration, calDraft])
+
+  useEffect(() => {
     if (!user) return
     setPhoto(readPhoto(user.email))
     setDraft({ name: user.name, email: user.email, garden: user.garden || '' })
@@ -437,8 +471,10 @@ export default function Dashboard() {
 
   if (!ready) {
     return (
-      <div className="grid min-h-screen place-items-center bg-[linear-gradient(160deg,#3aa0e8_0%,#7ed0ff_32%,#b6ef8a_68%,#3dae55_100%)] text-[#07182b]">
-        <p className="rounded-2xl bg-white/80 px-6 py-4 font-bold shadow">Cargando panel…</p>
+      <div className="grid min-h-screen place-items-center bg-slate-100 text-slate-800">
+        <p className="rounded-2xl border border-slate-200 bg-white px-6 py-4 font-semibold shadow-sm">
+          Cargando panel…
+        </p>
       </div>
     )
   }
@@ -502,7 +538,9 @@ export default function Dashboard() {
     minute: '2-digit',
   })
   const chartData = series.length ? series : summary.series || []
-  const show = (id) => section === 'inicio' || section === id
+  const isSection = (id) => section === id
+  const sectionCopy = SECTION_COPY[section]
+  const alertCount = (summary.alerts || []).length
 
   async function onPhoto(event) {
     const file = event.target.files?.[0]
@@ -895,6 +933,40 @@ export default function Dashboard() {
     }
   }
 
+  async function claimDeviceForOnboarding() {
+    if (!summary.zone?.id || busy) return
+    setBusy(true)
+    setOnboardingClaimError('')
+    try {
+      await api.claimDevice({
+        code: claimCode.trim(),
+        zoneId: summary.zone.id,
+        name: claimName.trim() || 'Mi HidroBot',
+      })
+      const data = await loadSummary({ syncForms: true })
+      await loadDevices()
+      if (data?.device?.id) setCalDeviceId(data.device.id)
+      setOnboardingStep(2)
+      setActionNote('Dispositivo vinculado. Sigue con la calibración del tanque.')
+    } catch (err) {
+      setOnboardingClaimError(err.message || 'No se pudo vincular.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function finishOnboarding() {
+    if (user?.id) localStorage.setItem(onboardingDoneKey(user.id), '1')
+    setOnboardingOpen(false)
+    setShowResumeOnboarding(false)
+    setSection('inicio')
+    setActionNote('¡Listo! Tu HidroBot está configurado.')
+  }
+
+  function dismissOnboarding() {
+    setOnboardingOpen(false)
+  }
+
   async function unlinkDevice(deviceId) {
     const keep = window.confirm(
       '¿Conservar el historial de este periodo en "Dispositivos anteriores"? Pulsa Cancelar para borrarlo.',
@@ -913,68 +985,25 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="relative min-h-screen text-[#07182b]">
-      <div className="pointer-events-none fixed inset-0" aria-hidden="true">
-        <div className="absolute inset-0 bg-[linear-gradient(160deg,#3aa0e8_0%,#7ed0ff_32%,#b6ef8a_68%,#3dae55_100%)]" />
-        <div className="absolute top-1/2 left-[58%] h-[70vh] w-[70vh] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.55),transparent_68%)]" />
-        <img className="absolute top-1/2 left-[58%] h-[min(84vh,800px)] w-auto max-w-none -translate-x-1/2 -translate-y-1/2 object-contain drop-shadow-[0_18px_40px_rgba(10,70,140,0.28)]" src="/logo.png" alt="" />
-      </div>
+    <PanelChrome
+      section={section}
+      onSection={setSection}
+      user={user}
+      photo={photo}
+      menu={menu}
+      setMenu={setMenu}
+      menuRef={menuRef}
+      alertCount={alertCount}
+      online={online}
+      onLogout={() => logout()}
+    >
+      {section !== 'perfil' && sectionCopy ? (
+        <PageHeader title={sectionCopy.title} description={`${sectionCopy.description} · ${now}`} />
+      ) : null}
 
-      <div className="relative z-10 grid min-h-screen lg:grid-cols-[240px_1fr]">
-        <aside className="flex flex-col border-white/60 bg-white/55 px-4 py-6 backdrop-blur-xl lg:sticky lg:top-0 lg:h-screen lg:border-r">
-          <Link className="mb-8 flex items-center gap-2 text-xl font-extrabold" to="/">
-            <img className="h-12 w-12 object-contain" src="/isotipo.png" alt="" />
-            <span><span className="text-[#0a3d6b]">Hidro</span><span className="text-[#0f6b32]">Bot</span></span>
-          </Link>
-          <nav className="grid gap-1" aria-label="Panel">
-            {nav.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left font-bold ${section === item.id ? 'bg-[#1276cc] text-white' : 'text-[#07182b] hover:bg-white/50'}`}
-                onClick={() => setSection(item.id)}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </button>
-            ))}
-            <Link className="flex items-center gap-3 rounded-xl px-3 py-2.5 font-bold text-[#07182b] hover:bg-white/50" to="/">
-              <Info className="h-4 w-4" /> Acerca de
-            </Link>
-          </nav>
-          <p className="mt-auto flex items-start gap-2 pt-8 text-sm font-semibold text-[#0f6b32]">
-            <Leaf className="mt-0.5 h-4 w-4 shrink-0" />
-            Riego inteligente, naturaleza en equilibrio
-          </p>
-        </aside>
-
-        <main className="px-5 py-5" id="contenido">
-          <header className="mb-3 flex items-center justify-end gap-3">
-            <div className="flex items-center gap-3 text-sm font-semibold text-[#07182b]">
-              <span className="flex items-center gap-2 px-1 py-1.5">
-                <Calendar className="h-4 w-4" /> {now}
-              </span>
-              <div className="relative" ref={menuRef}>
-                <button className={`grid h-9 w-9 place-items-center overflow-hidden rounded-full bg-[#1276cc] font-extrabold text-white ${menu ? 'ring-2 ring-[#0c5c2c] ring-offset-2' : ''}`} type="button" onClick={() => setMenu((open) => !open)} aria-label={`Perfil de ${user.name}`}>
-                  {photo ? <img className="h-full w-full object-cover" src={photo} alt="" /> : user.name.slice(0, 1).toUpperCase()}
-                </button>
-                {menu && (
-                  <div className="absolute top-12 right-0 z-20 w-56 overflow-hidden rounded-2xl border border-[#d7e6f2] bg-white text-left shadow-[0_16px_40px_rgba(16,40,30,0.18)]" role="menu">
-                    <button className="flex w-full items-center gap-3 px-4 py-3 text-left font-bold text-[#16324a] hover:bg-[#f4f8fb]" type="button" onClick={() => { setSection('perfil'); setMenu(false) }}>
-                      <User className="h-4 w-4" /> Perfil
-                    </button>
-                    <button className="flex w-full items-center gap-3 border-t border-[#e7eef3] px-4 py-3 text-left font-bold text-[#16324a] hover:bg-[#f4f8fb]" type="button" onClick={() => { void logout() }}>
-                      <LogOut className="h-4 w-4" /> Cerrar sesión
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </header>
-
-          {section === 'perfil' ? (
-            <article className={`${glass} mx-auto w-full max-w-[420px] px-6 py-6`}>
-              <h1 className="text-center text-3xl font-extrabold">Perfil</h1>
+      {section === 'perfil' ? (
+        <PanelCard className="mx-auto w-full max-w-md p-6">
+              <PageHeader title="Perfil" description="Datos de cuenta y seguridad." />
               <div className="mt-4 grid grid-cols-2 rounded-full bg-white/80 p-1">
                 {[['datos', 'Datos'], ['clave', 'Contraseña']].map(([id, label]) => (
                   <button key={id} className={`h-10 rounded-full text-sm font-extrabold ${profileTab === id ? 'bg-[#1276cc] text-white' : 'text-[#0a3d6b]'}`} type="button" onClick={() => setProfileTab(id)}>
@@ -1012,93 +1041,117 @@ export default function Dashboard() {
               )}
               {profileError && <p className="mt-3 text-center text-sm font-bold text-[#b42318]">{profileError}</p>}
               {profileNote && <p className="mt-3 text-center text-sm font-bold text-[#0f6b32]">{profileNote}</p>}
-            </article>
-          ) : (
-            <>
-              {onBattery && (
-                <p className={`${glass} mb-3 px-4 py-3 text-sm font-extrabold text-[#9a3412]`} role="status">
-                  Equipo en batería ({battery == null ? '—' : `${Math.round(battery)}%`}). El riego automático puede estar limitado.
-                </p>
-              )}
-              {error && <p className={`${glass} mb-3 px-4 py-3 text-sm font-bold text-[#b42318]`}>{error}</p>}
-              {loading && <p className={`${glass} mb-3 px-4 py-3 text-sm font-bold text-[#0a3d6b]`}>Actualizando…</p>}
+        </PanelCard>
+      ) : (
+        <div className="mx-auto w-full max-w-5xl">
+          {onBattery ? (
+            <StatusBanner tone="warn">
+              Equipo en batería ({battery == null ? '—' : `${Math.round(battery)}%`}). El riego automático puede
+              estar limitado.
+            </StatusBanner>
+          ) : null}
+          {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
+          {loading ? <StatusBanner tone="info">Actualizando datos del jardín…</StatusBanner> : null}
 
-              <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                <article className={`${glass} p-4`}>
-                  <div className="flex items-center gap-3">
-                    <span className="grid h-12 w-12 place-items-center rounded-full bg-[#1d6eab] text-white"><Droplets className="h-5 w-5" /></span>
-                    <div>
-                      <p className="text-sm font-semibold text-[#0a3d6b]">Humedad del suelo</p>
-                      <p className="text-2xl font-extrabold">{value == null ? '—' : `${Number(value).toFixed(1)}%`} <span className="text-sm font-bold text-[#1f9d4a]">{humidityStatus}</span></p>
-                    </div>
-                  </div>
-                  <MiniChart data={chartData} dataKey="humidity" color="#1d6eab" />
-                </article>
+          {isSection('inicio') && showResumeOnboarding ? (
+            <PanelCard className="mb-4 flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50/80 p-4">
+              <p className="text-sm font-medium text-emerald-950">
+                Aún no has terminado la configuración inicial (vincular y calibrar).
+              </p>
+              <BtnPrimary
+                type="button"
+                className="h-9 px-4 text-sm"
+                onClick={() => {
+                  setOnboardingOpen(true)
+                  setOnboardingStep(summary.device ? (tankCalibrated ? (soilCalibrated ? 4 : 3) : 2) : 1)
+                }}
+              >
+                Continuar configuración
+              </BtnPrimary>
+            </PanelCard>
+          ) : null}
 
-                <article className={`${glass} p-4`}>
-                  <div className="flex items-center gap-3">
-                    <span className="grid h-12 w-12 place-items-center rounded-full bg-[#0f766e] text-white"><Gauge className="h-5 w-5" /></span>
-                    <div>
-                      <p className="text-sm font-semibold text-[#0a3d6b]">Nivel del tanque</p>
-                      <p className="text-2xl font-extrabold">{tank == null ? '—' : `${Math.round(tank)}%`}</p>
-                      <p className="text-xs text-[#6b8494]">{summary.latest?.distanceCm == null ? 'Sin distancia' : `${summary.latest.distanceCm} cm`}</p>
-                    </div>
-                  </div>
-                  <MiniChart data={chartData} dataKey="tank" color="#0f766e" />
-                </article>
-
-                <article className={`${glass} p-4`}>
-                  <div className="flex items-center gap-3">
-                    <span className="grid h-12 w-12 place-items-center rounded-full bg-[#a16207] text-white"><Zap className="h-5 w-5" /></span>
-                    <div>
-                      <p className="text-sm font-semibold text-[#0a3d6b]">Energía</p>
-                      <p className="text-2xl font-extrabold">{onBattery ? 'Batería' : 'Red'}</p>
-                      <p className="text-xs text-[#6b8494]">
-                        Red {summary.latest?.vRed ?? '—'} V · Bat {summary.latest?.vBat ?? '—'} V
-                        {battery != null ? ` (${Math.round(battery)}%)` : ''}
-                      </p>
-                    </div>
-                  </div>
-                </article>
-
-                <article className={`${glass} p-4`}>
-                  <div className="flex items-center gap-3">
-                    <span className="grid h-12 w-12 place-items-center rounded-full bg-[#1d6eab] text-white"><Droplets className="h-5 w-5" /></span>
-                    <div>
-                      <p className="text-sm font-semibold text-[#0a3d6b]">Bomba</p>
-                      <p className="text-2xl font-extrabold text-[#1f9d4a]">{pump ? 'Regando' : 'Apagada'}</p>
-                    </div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button className="flex h-11 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#1d4ed8] to-[#22c55e] text-sm font-extrabold text-white disabled:opacity-60" type="button" disabled={!online || busy || !summary.device} onClick={() => { void startWater() }}>
+          {isSection('inicio') ? (
+            <section className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <StatCard
+                icon={Droplets}
+                iconClass="bg-sky-600"
+                label="Humedad del suelo"
+                value={value == null ? '—' : `${Number(value).toFixed(1)}%`}
+                meta={humidityStatus}
+                footer={<MiniChart data={chartData} dataKey="humidity" color="#0284c7" />}
+              />
+              <StatCard
+                icon={Gauge}
+                iconClass="bg-teal-600"
+                label="Nivel del tanque"
+                value={tank == null ? '—' : `${Math.round(tank)}%`}
+                meta={
+                  summary.latest?.distanceCm == null
+                    ? 'Sin lectura del ultrasónico'
+                    : `${summary.latest.distanceCm} cm al sensor`
+                }
+                footer={<MiniChart data={chartData} dataKey="tank" color="#0d9488" />}
+              />
+              <StatCard
+                icon={Zap}
+                iconClass="bg-amber-600"
+                label="Energía"
+                value={onBattery ? 'Batería' : 'Red eléctrica'}
+                meta={`Red ${summary.latest?.vRed ?? '—'} V · Bat ${summary.latest?.vBat ?? '—'} V${
+                  battery != null ? ` (${Math.round(battery)}%)` : ''
+                }`}
+              />
+              <StatCard
+                icon={Droplets}
+                iconClass="bg-emerald-600"
+                label="Bomba"
+                value={pump ? 'Regando' : 'Apagada'}
+                footer={
+                  <div className="grid grid-cols-2 gap-2">
+                    <BtnPrimary
+                      className="w-full rounded-full"
+                      disabled={!online || busy || !summary.device}
+                      onClick={() => {
+                        void startWater()
+                      }}
+                    >
                       <Play className="h-4 w-4 fill-white" /> Regar
-                    </button>
-                    <button className="flex h-11 items-center justify-center gap-2 rounded-full border border-[#d7e3ee] bg-white text-sm font-extrabold text-[#0a3d6b] disabled:opacity-60" type="button" disabled={busy || !summary.device} onClick={() => { void stopWater() }}>
+                    </BtnPrimary>
+                    <BtnSecondary
+                      className="w-full rounded-full"
+                      disabled={busy || !summary.device}
+                      onClick={() => {
+                        void stopWater()
+                      }}
+                    >
                       <Square className="h-3.5 w-3.5 fill-current" /> Detener
-                    </button>
+                    </BtnSecondary>
                   </div>
-                </article>
+                }
+              />
+              <PanelCard className="p-4 sm:col-span-2 xl:col-span-1">
+                <h2 className="mb-2 text-sm font-bold text-slate-800">Estado del dispositivo</h2>
+                <ul className="text-sm text-slate-600">
+                  {[
+                    ['MQTT', summary.device?.mqttId || '—'],
+                    ['ESP32', !summary.device ? 'Sin dispositivo' : online ? 'En línea' : 'Desconectado'],
+                    ['Última señal', summary.device?.lastSeenLabel || '—'],
+                    ['RSSI', summary.latest?.rssi ?? '—'],
+                  ].map(([name, detail]) => (
+                    <li key={name} className="flex justify-between gap-3 border-t border-slate-100 py-2">
+                      <span>{name}</span>
+                      <b className="text-right font-semibold text-emerald-700">{detail}</b>
+                    </li>
+                  ))}
+                </ul>
+              </PanelCard>
+            </section>
+          ) : null}
 
-                <article className={`${glass} p-4 md:col-span-2 xl:col-span-1`}>
-                  <h2 className="mb-2 font-extrabold">Estado del dispositivo</h2>
-                  <ul className="text-sm">
-                    {[
-                      ['MQTT', summary.device?.mqttId || '—'],
-                      ['ESP32', !summary.device ? 'Sin dispositivo' : online ? 'En línea' : 'Desconectado'],
-                      ['Última señal', summary.device?.lastSeenLabel || '—'],
-                      ['RSSI', summary.latest?.rssi ?? '—'],
-                    ].map(([name, detail]) => (
-                      <li key={name} className="flex justify-between gap-3 border-t border-[#e7eef3] py-2">
-                        {name} <b className="text-right text-[#1f9d4a]">{detail}</b>
-                      </li>
-                    ))}
-                  </ul>
-                </article>
-              </section>
-
-              <section className="grid gap-3 lg:grid-cols-[1.4fr_0.7fr]">
-                {show('dispositivos') && (
-                  <article className={`${glass} p-4`}>
+          <section className="grid gap-4">
+            {isSection('dispositivos') ? (
+              <PanelCard className="p-4 md:p-5">
                     <h2 className="mb-3 font-extrabold">Mis dispositivos</h2>
                     {devicesList.devices?.length ? (
                       <ul className="mb-4 grid gap-2 text-sm">
@@ -1162,40 +1215,57 @@ export default function Dashboard() {
                         </ul>
                       </div>
                     ) : null}
-                  </article>
-                )}
+              </PanelCard>
+            ) : null}
 
-                {show('historial') && (
-                  <article className={`${glass} p-4`}>
-                    <header className="mb-2 flex items-center justify-between">
-                      <h2 className="flex items-center gap-2 font-extrabold"><ChartColumn className="h-4 w-4" /> Historial</h2>
-                      <div className="flex gap-1 text-xs font-bold text-[#6b8494]">
-                        {['1h', '6h', '12h', '24h'].map((item) => (
-                          <button
-                            key={item}
-                            type="button"
-                            className={`rounded-full px-2 py-1 ${range === item ? 'bg-[#16324a] text-white' : ''}`}
-                            onClick={() => {
-                              setRange(item)
-                              setSeriesMeta(clientRangeMeta(item))
-                              if (summary.device?.id) void loadSeries(summary.device.id, item)
-                            }}
-                          >
-                            {item}
-                          </button>
-                        ))}
-                      </div>
-                    </header>
-                    <HistoryChart
-                      data={chartData}
-                      rangeMeta={seriesMeta}
-                      irrigations={chartIrrigations}
-                    />
-                  </article>
-                )}
+            {isSection('historial') ? (
+              <>
+                <PanelCard className="p-4 md:p-5">
+                  <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
+                      <ChartColumn className="h-4 w-4" /> Telemetría
+                    </h2>
+                    <div className="flex gap-1 rounded-full bg-slate-100 p-1 text-xs font-bold text-slate-600">
+                      {['1h', '6h', '12h', '24h'].map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          className={`rounded-full px-3 py-1 ${range === item ? 'bg-white text-slate-900 shadow-sm' : ''}`}
+                          onClick={() => {
+                            setRange(item)
+                            setSeriesMeta(clientRangeMeta(item))
+                            if (summary.device?.id) void loadSeries(summary.device.id, item)
+                          }}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                  </header>
+                  <HistoryChart data={chartData} rangeMeta={seriesMeta} irrigations={chartIrrigations} />
+                </PanelCard>
+                <PanelCard className="p-4 md:p-5">
+                  <h2 className="mb-2 text-base font-bold text-slate-900">Historial de riegos</h2>
+                  <ul className="text-sm text-slate-600">
+                    {(summary.irrigations || []).length === 0 ? (
+                      <li className="border-t border-slate-100 py-3 text-slate-500">Sin riegos aún.</li>
+                    ) : (
+                      summary.irrigations.slice(0, 12).map((row) => (
+                        <li key={row.id} className="flex justify-between gap-3 border-t border-slate-100 py-2">
+                          <span>
+                            {row.reason} · {row.secondsRequested ?? '—'}s
+                          </span>
+                          <time className="shrink-0 text-slate-400">{row.startedLabel}</time>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </PanelCard>
+              </>
+            ) : null}
 
-                {show('sistema') && (
-                  <article className={`${glass} p-4`}>
+            {isSection('sistema') ? (
+              <PanelCard className="p-4 md:p-5">
                     <header className="mb-3 flex items-center justify-between gap-3">
                       <h2 className="font-extrabold">Configuración</h2>
                       {formsDirty ? (
@@ -1477,51 +1547,75 @@ export default function Dashboard() {
                         </div>
                       </>
                     )}
-                    {actionError && <p className="mt-3 text-sm font-bold text-[#b42318]">{actionError}</p>}
-                    {actionNote && <p className="mt-3 text-sm font-bold text-[#0f6b32]">{actionNote}</p>}
-                  </article>
-                )}
+                {actionError ? (
+                  <StatusBanner tone="error" className="mt-4">
+                    {actionError}
+                  </StatusBanner>
+                ) : null}
+                {actionNote ? (
+                  <StatusBanner tone="ok" className="mt-4">
+                    {actionNote}
+                  </StatusBanner>
+                ) : null}
+              </PanelCard>
+            ) : null}
 
-                {show('sistema') && (
-                  <article className={`${glass} p-4`}>
-                    <h2 className="mb-2 font-extrabold">Historial de riegos</h2>
-                    <ul className="text-sm">
-                      {(summary.irrigations || []).length === 0 ? (
-                        <li className="border-t border-[#e7eef3] py-3 text-[#6b8494]">Sin riegos aún.</li>
-                      ) : (
-                        summary.irrigations.slice(0, 8).map((row) => (
-                          <li key={row.id} className="flex justify-between gap-3 border-t border-[#e7eef3] py-2">
-                            <span>{row.reason} · {row.secondsRequested ?? '—'}s</span>
-                            <time className="text-[#7e94a3]">{row.startedLabel}</time>
-                          </li>
-                        ))
-                      )}
-                    </ul>
-                  </article>
-                )}
+            {isSection('alertas') ? (
+              <PanelCard className="p-4 md:p-5">
+                <h2 className="mb-2 flex items-center gap-2 text-base font-bold text-slate-900">
+                  <Bell className="h-4 w-4" /> Últimas alertas
+                </h2>
+                <ul>
+                  {(summary.alerts || []).length === 0 ? (
+                    <li className="border-t border-slate-100 py-3 text-sm text-slate-500">No hay alertas.</li>
+                  ) : (
+                    summary.alerts.map((entry) => (
+                      <li
+                        key={entry.id}
+                        className="flex justify-between gap-3 border-t border-slate-100 py-2 text-sm text-slate-700"
+                      >
+                        <span>{entry.message}</span>
+                        <time className="shrink-0 text-slate-400">{entry.createdLabel}</time>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              </PanelCard>
+            ) : null}
+          </section>
+        </div>
+      )}
 
-                {show('alertas') && (
-                  <article className={`${glass} p-4`}>
-                    <h2 className="mb-2 flex items-center gap-2 font-extrabold"><Bell className="h-4 w-4" /> Alertas</h2>
-                    <ul>
-                      {(summary.alerts || []).length === 0 ? (
-                        <li className="border-t border-[#e7eef3] py-3 text-sm font-semibold text-[#6b8494]">No hay alertas.</li>
-                      ) : (
-                        summary.alerts.map((entry) => (
-                          <li key={entry.id} className="flex justify-between gap-3 border-t border-[#e7eef3] py-2 text-sm">
-                            <span>{entry.message}</span>
-                            <time className="shrink-0 text-[#7e94a3]">{entry.createdLabel}</time>
-                          </li>
-                        ))
-                      )}
-                    </ul>
-                  </article>
-                )}
-              </section>
-            </>
-          )}
-        </main>
-      </div>
+      <OnboardingWizard
+        open={onboardingOpen}
+        step={onboardingStep}
+        onStep={setOnboardingStep}
+        onClose={dismissOnboarding}
+        onFinish={finishOnboarding}
+        zoneName={summary.zone?.name}
+        claimCode={claimCode}
+        setClaimCode={setClaimCode}
+        claimName={claimName}
+        setClaimName={setClaimName}
+        onClaim={() => {
+          void claimDeviceForOnboarding()
+        }}
+        claimBusy={busy}
+        claimError={onboardingClaimError}
+        hasDevice={Boolean(summary.device)}
+        deviceOnline={online}
+        deviceName={summary.device?.name}
+        tankCalibrated={tankCalibrated}
+        soilCalibrated={soilCalibrated}
+        onOpenTankWizard={() => {
+          void openTankWizard()
+        }}
+        onOpenSoilWizard={() => {
+          void openSoilWizard()
+        }}
+        tankWizardOpen={tankWizardOpen}
+        soilWizardOpen={soilWizardOpen}
+      />
 
       <TankCalibrationWizard
         open={tankWizardOpen}
@@ -1570,6 +1664,6 @@ export default function Dashboard() {
         onSaveDry={() => captureSoil('dry')}
         onSaveWet={() => captureSoil('wet')}
       />
-    </div>
+    </PanelChrome>
   )
 }

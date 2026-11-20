@@ -7,8 +7,8 @@
   --blue: #8ec8ef;
   --line: rgba(215, 228, 204, 0.16);
   --card: #18261f;
-  --sans: "Times New Roman", Times, serif;
-  --serif: "Times New Roman", Times, serif;
+  --sans: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --serif: Georgia, "Times New Roman", Times, serif;
   color-scheme: light;
 }
 
@@ -17,18 +17,18 @@
 html { scroll-behavior: smooth; }
 
 html, body {
-  font-family: "Times New Roman", Times, serif;
+  font-family: var(--sans);
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  color: var(--ink);
-  font-family: "Times New Roman", Times, serif;
-  font-size: 17px;
+  font-family: var(--sans);
+  font-size: 16px;
   line-height: 1.5;
-  background: #e7f3fb;
-  color: #16324a;
+  background: #f1f5f9;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
 }
 
 #root { position: relative; z-index: 1; }
