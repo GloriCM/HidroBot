@@ -39,13 +39,13 @@ export default function OnboardingWizard({
       aria-labelledby="onboarding-title"
     >
       <PanelCard className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden sm:max-h-[88vh] sm:rounded-3xl">
-        <div className="border-b border-slate-100 bg-slate-50/80 px-4 pt-4 pb-3 sm:px-5">
+        <div className="pc-onboarding-header border-b border-[color:var(--pc-border)] bg-[var(--pc-surface-muted)] px-4 pt-4 pb-3 sm:px-5">
           <SetupStepBubbles current={progress} />
         </div>
 
         <header className="flex items-start justify-between gap-3 px-5 py-3">
           <div>
-            <h2 id="onboarding-title" className="text-lg font-bold text-slate-900">
+            <h2 id="onboarding-title" className="text-lg font-bold text-[var(--pc-text)]">
               {stepTitle}
             </h2>
             {zoneName ? (
@@ -64,10 +64,10 @@ export default function OnboardingWizard({
 
         <div className="flex-1 overflow-y-auto px-5 py-5">
           {step === 0 ? (
-            <div className="grid gap-4 text-sm text-slate-600">
+            <div className="grid gap-4 text-sm text-[var(--pc-text-secondary)]">
               <p>
                 En unos minutos tendrás el panel listo: conecta el ESP32 a la red, anota el{' '}
-                <strong className="text-slate-800">código de vinculación</strong> que muestra la pantalla y
+                <strong className="text-[var(--pc-text)]">código de vinculación</strong> que muestra la pantalla y
                 sigue los pasos.
               </p>
               <ul className="grid gap-2 rounded-xl bg-slate-50 p-4 text-slate-700">
@@ -89,9 +89,9 @@ export default function OnboardingWizard({
 
           {step === 1 ? (
             <div className="grid gap-4">
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-[var(--pc-text-secondary)]">
                 Enciende el HidroBot conectado a Wi‑Fi. En la pantalla verás un código tipo{' '}
-                <span className="font-mono font-bold text-slate-800">ABC-123</span>.
+                <span className="font-mono font-bold text-[var(--pc-text)]">ABC-123</span>.
               </p>
               <FieldLabel
                 label="Código de vinculación"
@@ -141,7 +141,7 @@ export default function OnboardingWizard({
           ) : null}
 
           {step === 2 ? (
-            <div className="grid gap-4 text-sm text-slate-600">
+            <div className="grid gap-4 text-sm text-[var(--pc-text-secondary)]">
               <p>
                 Mide la distancia del sensor ultrasónico con el tanque <strong>vacío</strong> y luego{' '}
                 <strong>lleno</strong>. Usamos la mediana de varias lecturas para mayor precisión.
@@ -163,7 +163,7 @@ export default function OnboardingWizard({
           ) : null}
 
           {step === 3 ? (
-            <div className="grid gap-4 text-sm text-slate-600">
+            <div className="grid gap-4 text-sm text-[var(--pc-text-secondary)]">
               <p>
                 Coloca la sonda en suelo <strong>seco</strong> y guarda la lectura; luego en suelo{' '}
                 <strong>bien mojado</strong> (o en agua) y guarda otra vez.
@@ -185,15 +185,15 @@ export default function OnboardingWizard({
               <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-emerald-100 text-emerald-700">
                 <Check className="h-8 w-8" strokeWidth={2.5} />
               </div>
-              <p className="text-lg font-bold text-slate-900">¡Todo listo!</p>
-              <p className="text-sm text-slate-600">
+              <p className="text-lg font-bold text-[var(--pc-text)]">¡Todo listo!</p>
+              <p className="text-sm text-[var(--pc-text-secondary)]">
                 Ya puedes ver el resumen en Inicio, revisar el historial y ajustar umbrales cuando quieras.
               </p>
             </div>
           ) : null}
         </div>
 
-        <footer className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-4">
+        <footer className="flex flex-wrap gap-2 border-t border-[color:var(--pc-border)] px-5 py-4">
           {step === 0 ? (
             <>
               <BtnSecondary type="button" className="flex-1" onClick={onClose}>

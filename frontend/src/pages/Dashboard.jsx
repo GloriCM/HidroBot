@@ -1088,7 +1088,7 @@ export default function Dashboard() {
           {loading ? <StatusBanner tone="info">Actualizando datos del jardín…</StatusBanner> : null}
 
           {isSection('inicio') && showResumeOnboarding && !onboardingOpen ? (
-            <PanelCard className="mb-4 flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50/80 p-4">
+            <PanelCard className="pc-banner-ok mb-4 flex flex-wrap items-center justify-between gap-3 border-emerald-200 bg-emerald-50/80 p-4">
               <p className="text-sm font-medium text-emerald-950">
                 Aún no has terminado la configuración inicial (vincular y calibrar).
               </p>
@@ -1165,15 +1165,15 @@ export default function Dashboard() {
                 }
               />
               <PanelCard className="p-4 sm:col-span-2 xl:col-span-1">
-                <h2 className="mb-2 text-sm font-bold text-slate-800">Estado del dispositivo</h2>
-                <ul className="text-sm text-slate-600">
+                <h2 className="pc-section-title mb-2 text-sm">Estado del dispositivo</h2>
+                <ul className="text-sm text-[var(--pc-text-secondary)]">
                   {[
                     ['MQTT', summary.device?.mqttId || '—'],
                     ['ESP32', !summary.device ? 'Sin dispositivo' : online ? 'En línea' : 'Desconectado'],
                     ['Última señal', summary.device?.lastSeenLabel || '—'],
                     ['RSSI', summary.latest?.rssi ?? '—'],
                   ].map(([name, detail]) => (
-                    <li key={name} className="flex justify-between gap-3 border-t border-slate-100 py-2">
+                    <li key={name} className="pc-border-t flex justify-between gap-3 border-t py-2">
                       <span>{name}</span>
                       <b className="text-right font-semibold text-emerald-700">{detail}</b>
                     </li>
@@ -1186,11 +1186,11 @@ export default function Dashboard() {
           <section className="grid gap-4">
             {isSection('dispositivos') ? (
               <PanelCard className="p-4 md:p-5">
-                    <h2 className="mb-3 font-extrabold">Mis dispositivos</h2>
+                    <h2 className="pc-section-title mb-3 text-base">Mis dispositivos</h2>
                     {devicesList.devices?.length ? (
                       <ul className="mb-4 grid gap-2 text-sm">
                         {devicesList.devices.map((d) => (
-                          <li key={d.id} className="rounded-xl border border-[#d7e3ee] bg-white/80 p-3">
+                          <li key={d.id} className="pc-legacy-card rounded-xl border border-[#d7e3ee] bg-white/80 p-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div>
                                 <p className="font-extrabold">{d.name}</p>

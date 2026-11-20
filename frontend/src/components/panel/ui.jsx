@@ -1,7 +1,7 @@
 export function PanelCard({ className = '', children, as: Tag = 'article' }) {
   return (
     <Tag
-      className={`rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_30px_rgba(15,40,60,0.06)] ${className}`}
+      className={`rounded-2xl border bg-[var(--pc-surface)] shadow-[var(--pc-shadow)] border-[color:var(--pc-border)] ${className}`}
     >
       {children}
     </Tag>
@@ -12,24 +12,25 @@ export function PageHeader({ title, description, action }) {
   return (
     <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-[1.65rem]">{title}</h1>
-        {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+        <h1 className="text-2xl font-bold tracking-tight text-[var(--pc-text)] sm:text-[1.65rem]">{title}</h1>
+        {description ? <p className="mt-1 text-sm text-[var(--pc-muted)]">{description}</p> : null}
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </header>
   )
 }
 
+const BANNER_TONE_CLASS = {
+  info: 'pc-banner-info border-sky-200 bg-sky-50 text-sky-950',
+  warn: 'pc-banner-warn border-amber-200 bg-amber-50 text-amber-950',
+  error: 'pc-banner-error border-red-200 bg-red-50 text-red-900',
+  ok: 'pc-banner-ok border-emerald-200 bg-emerald-50 text-emerald-950',
+}
+
 export function StatusBanner({ tone = 'info', className = '', children }) {
-  const tones = {
-    info: 'border-sky-200 bg-sky-50 text-sky-950',
-    warn: 'border-amber-200 bg-amber-50 text-amber-950',
-    error: 'border-red-200 bg-red-50 text-red-900',
-    ok: 'border-emerald-200 bg-emerald-50 text-emerald-950',
-  }
   return (
     <p
-      className={`mb-4 rounded-xl border px-4 py-3 text-sm font-medium ${tones[tone] || tones.info} ${className}`}
+      className={`mb-4 rounded-xl border px-4 py-3 text-sm font-medium ${BANNER_TONE_CLASS[tone] || BANNER_TONE_CLASS.info} ${className}`}
       role="status"
     >
       {children}
@@ -42,17 +43,17 @@ export function StatCard({ icon: Icon, iconClass, label, value, meta, footer }) 
     <PanelCard className="p-4">
       <div className="flex items-start gap-3">
         <span
-          className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white ${iconClass}`}
+          className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white shadow-sm ${iconClass}`}
         >
           <Icon className="h-5 w-5" strokeWidth={2} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-          <p className="mt-0.5 text-2xl font-bold text-slate-900">{value}</p>
-          {meta ? <p className="mt-0.5 text-xs text-slate-500">{meta}</p> : null}
+          <p className="pc-stat-label">{label}</p>
+          <p className="mt-1 text-2xl font-bold text-[var(--pc-text)]">{value}</p>
+          {meta ? <p className="mt-1 text-xs font-medium text-[var(--pc-muted)]">{meta}</p> : null}
         </div>
       </div>
-      {footer ? <div className="mt-3 border-t border-slate-100 pt-3">{footer}</div> : null}
+      {footer ? <div className="pc-border-t mt-3 border-t pt-3">{footer}</div> : null}
     </PanelCard>
   )
 }
@@ -61,7 +62,7 @@ export function BtnPrimary({ className = '', children, ...props }) {
   return (
     <button
       type="button"
-      className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50 ${className}`}
+      className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50 ${className}`}
       {...props}
     >
       {children}
@@ -73,7 +74,7 @@ export function BtnSecondary({ className = '', children, ...props }) {
   return (
     <button
       type="button"
-      className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 transition hover:bg-slate-50 disabled:opacity-50 ${className}`}
+      className={`pc-btn-secondary inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[color:var(--pc-border)] bg-[var(--pc-surface)] px-4 text-sm font-bold text-[var(--pc-text)] transition hover:bg-[var(--pc-surface-muted)] disabled:opacity-50 ${className}`}
       {...props}
     >
       {children}
@@ -84,8 +85,8 @@ export function BtnSecondary({ className = '', children, ...props }) {
 export function FieldLabel({ label, hint, children, className = '', htmlFor }) {
   return (
     <label htmlFor={htmlFor} className={`block ${className}`}>
-      <span className="block text-sm font-semibold text-slate-800">{label}</span>
-      {hint ? <span className="mt-0.5 block text-xs font-normal text-slate-500">{hint}</span> : null}
+      <span className="block text-sm font-semibold text-[var(--pc-text)]">{label}</span>
+      {hint ? <span className="mt-0.5 block text-xs font-normal text-[var(--pc-muted)]">{hint}</span> : null}
       <div className="mt-2">{children}</div>
     </label>
   )
@@ -95,7 +96,7 @@ export function TextInput({ className = '', id, ...props }) {
   return (
     <input
       id={id}
-      className={`block h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 disabled:bg-slate-50 disabled:text-slate-500 ${className}`}
+      className={`pc-input block h-12 w-full px-4 text-base shadow-sm outline-none transition placeholder:text-[var(--pc-muted)] focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 disabled:opacity-60 ${className}`}
       {...props}
     />
   )
@@ -104,12 +105,12 @@ export function TextInput({ className = '', id, ...props }) {
 export function ToggleSwitch({ checked, onChange, label }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-sm font-semibold text-slate-700">{label}</span>
+      <span className="text-sm font-semibold text-[var(--pc-text)]">{label}</span>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
-        className={`relative h-7 w-12 rounded-full p-0.5 transition ${checked ? 'bg-emerald-500' : 'bg-slate-300'}`}
+        className={`relative h-7 w-12 rounded-full p-0.5 transition ${checked ? 'bg-emerald-500' : 'bg-slate-400'}`}
         onClick={() => onChange(!checked)}
       >
         <span

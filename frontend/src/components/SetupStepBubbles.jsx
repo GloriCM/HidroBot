@@ -16,7 +16,7 @@ export default function SetupStepBubbles({ current, className = '', compact = fa
 
   return (
     <nav className={className} aria-label="Progreso de configuración">
-      <p className="mb-3 text-center text-xs font-bold tracking-wide text-slate-500 uppercase">
+      <p className="mb-3 text-center text-xs font-bold tracking-wide text-[var(--pc-muted)] uppercase">
         {allDone ? 'Configuración completa' : `Paso ${safe} de ${SETUP_STEPS.length}`}
       </p>
       <ol className="flex items-start justify-center">
@@ -38,8 +38,8 @@ export default function SetupStepBubbles({ current, className = '', compact = fa
                     done
                       ? 'border-emerald-600 bg-emerald-600 text-white'
                       : active
-                        ? 'border-emerald-500 bg-white text-emerald-700 shadow-md ring-4 ring-emerald-100'
-                        : 'border-slate-200 bg-slate-50 text-slate-400'
+                        ? 'border-emerald-500 bg-[var(--pc-surface)] text-emerald-600 shadow-md ring-4 ring-emerald-500/20'
+                        : 'border-[color:var(--pc-border)] bg-[var(--pc-surface-muted)] text-[var(--pc-muted)]'
                   }`}
                   aria-current={active ? 'step' : undefined}
                 >
@@ -48,7 +48,7 @@ export default function SetupStepBubbles({ current, className = '', compact = fa
                 <span
                   className={`mt-1.5 text-center leading-tight font-bold ${
                     compact ? 'text-[9px]' : 'text-[10px] sm:text-[11px]'
-                  } ${active ? 'text-emerald-800' : done ? 'text-emerald-700' : 'text-slate-400'}`}
+                  } ${active ? 'text-emerald-600' : done ? 'text-emerald-500' : 'text-[var(--pc-muted)]'}`}
                 >
                   {item.label}
                 </span>
@@ -56,7 +56,7 @@ export default function SetupStepBubbles({ current, className = '', compact = fa
               {!isLast ? (
                 <span
                   className={`mt-5 block h-0.5 shrink-0 rounded-full ${compact ? 'w-4 sm:w-6' : 'w-5 sm:w-8'} ${
-                    done ? 'bg-emerald-500' : 'bg-slate-200'
+                    done ? 'bg-emerald-500' : 'bg-[var(--pc-border)]'
                   }`}
                   aria-hidden
                 />
