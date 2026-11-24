@@ -14,7 +14,6 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { usePanelTheme } from '../../hooks/usePanelTheme'
 
 const NAV = [
   { id: 'inicio', label: 'Inicio', short: 'Inicio', icon: Home },
@@ -70,10 +69,11 @@ export default function PanelChrome({
   alertCount = 0,
   online,
   onLogout,
+  isDark = false,
+  onThemeToggle,
   children,
 }) {
   const [drawer, setDrawer] = useState(false)
-  const { isDark, toggle } = usePanelTheme()
 
   function go(id) {
     onSection(id)
@@ -155,7 +155,7 @@ export default function PanelChrome({
               <button
                 type="button"
                 className="grid h-10 w-10 place-items-center rounded-xl border border-[color:var(--pc-border)] bg-[var(--pc-surface-muted)] text-[var(--pc-text)] transition hover:bg-[var(--pc-nav-hover-bg)]"
-                onClick={toggle}
+                onClick={onThemeToggle}
                 aria-label={isDark ? 'Usar tema claro' : 'Usar tema oscuro'}
                 title={isDark ? 'Tema claro' : 'Tema oscuro'}
               >

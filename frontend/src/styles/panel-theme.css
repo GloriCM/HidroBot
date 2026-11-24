@@ -1,5 +1,20 @@
 /* Tema del panel (claro / oscuro vía .panel-skin.theme-dark en PanelChrome) */
 
+/* Fallback: modales/portales fuera del árbol del panel siguen legibles en claro */
+:root {
+  --pc-page: #eef2f6;
+  --pc-surface: #ffffff;
+  --pc-surface-muted: #f8fafc;
+  --pc-border: #e2e8f0;
+  --pc-text: #0f172a;
+  --pc-text-secondary: #475569;
+  --pc-label: #334155;
+  --pc-muted: #64748b;
+  --pc-input-bg: #ffffff;
+  --pc-input-border: #cbd5e1;
+  --pc-shadow: 0 20px 50px rgba(15, 23, 42, 0.18);
+}
+
 .panel-skin {
   color-scheme: light;
   --pc-page: #eef2f6;
@@ -124,4 +139,72 @@
 
 .panel-skin.theme-dark .pc-btn-secondary:hover {
   background: var(--pc-border);
+}
+
+/* Modal de onboarding: superficie 100 % opaca, sin bleed del dashboard */
+.onboarding-modal-backdrop {
+  background: rgb(15 23 42 / 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.onboarding-modal-shell {
+  isolation: isolate;
+  display: flex;
+  max-height: min(90vh, 640px);
+  width: 100%;
+  max-width: 32rem;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  border: 1px solid var(--pc-border);
+  background: var(--pc-surface);
+  box-shadow: var(--pc-shadow);
+}
+
+.onboarding-modal-shell header,
+.onboarding-modal-shell footer {
+  flex-shrink: 0;
+  background: var(--pc-surface);
+}
+
+.onboarding-modal-shell .onboarding-modal-head {
+  border-bottom: 1px solid var(--pc-border);
+  background: var(--pc-surface-muted);
+}
+
+.onboarding-modal-shell .onboarding-modal-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--pc-surface);
+}
+
+.onboarding-modal-checklist {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  list-style: none;
+  border-radius: 0.75rem;
+  border: 1px solid var(--pc-border);
+  background: var(--pc-surface-muted);
+  color: var(--pc-text-secondary);
+}
+
+.onboarding-modal-checklist li + li {
+  margin-top: 0.65rem;
+}
+
+.panel-skin.theme-dark .onboarding-modal-backdrop {
+  background: rgb(2 6 23 / 0.82);
+}
+
+@media (max-width: 639px) {
+  .onboarding-modal-shell {
+    max-height: 92vh;
+    border-radius: 1.25rem 1.25rem 0 0;
+  }
+
+  .onboarding-modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
 }

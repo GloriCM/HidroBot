@@ -1,7 +1,8 @@
 export function PanelCard({ className = '', children, as: Tag = 'article' }) {
   return (
     <Tag
-      className={`rounded-2xl border bg-[var(--pc-surface)] shadow-[var(--pc-shadow)] border-[color:var(--pc-border)] ${className}`}
+      className={`rounded-2xl border border-[color:var(--pc-border)] bg-[var(--pc-surface)] ${className}`}
+      style={{ boxShadow: 'var(--pc-shadow)' }}
     >
       {children}
     </Tag>

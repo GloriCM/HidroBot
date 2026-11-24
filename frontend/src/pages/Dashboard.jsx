@@ -21,6 +21,7 @@ import { BtnPrimary, BtnSecondary, PageHeader, PanelCard, StatusBanner, StatCard
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
 import { validateClaimCodeInput } from '../lib/apiErrors'
+import { usePanelTheme } from '../hooks/usePanelTheme'
 import { ONBOARDING_START_KEY } from '../lib/onboarding'
 import { moistureState } from '../lib/moisture'
 import {
@@ -237,6 +238,7 @@ function MiniChart({ data, dataKey, color }) {
 
 export default function Dashboard() {
   const { user, ready, logout, updateProfile, resetPassword } = useAuth()
+  const { isDark, toggle: onThemeToggle } = usePanelTheme()
   const [searchParams, setSearchParams] = useSearchParams()
   const [summary, setSummary] = useState(emptySummary)
   const [series, setSeries] = useState([])
@@ -1029,6 +1031,8 @@ export default function Dashboard() {
       menuRef={menuRef}
       alertCount={alertCount}
       online={online}
+      isDark={isDark}
+      onThemeToggle={onThemeToggle}
       onLogout={() => logout()}
     >
       {section !== 'perfil' && sectionCopy ? (
@@ -1623,6 +1627,7 @@ export default function Dashboard() {
 
       <OnboardingWizard
         open={onboardingOpen}
+        isDark={isDark}
         step={onboardingStep}
         onStep={setOnboardingStep}
         onClose={dismissOnboarding}
