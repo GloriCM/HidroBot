@@ -16,6 +16,29 @@
 
 4. Despliega el flujo.
 
+### Error `ENOTFOUND` en POST status / telemetry
+
+Node-RED no puede resolver el **hostname** de `API_URL` (DNS). No es fallo del ESP ni del firmware.
+
+| Situación | `API_URL` correcta |
+|-----------|-------------------|
+| Node-RED y la API en el **mismo `docker compose`** (red interna) | `http://api:3000` |
+| Node-RED en el **host** y la API publicada en el servidor (puerto local) | `http://127.0.0.1:3000` (o el puerto que uses) |
+| API solo tras **Nginx** en el mismo equipo | `http://127.0.0.1:PUERTO_INTERNO` — evita `https://hidrobot.jelabs.net` si el servidor no resuelve su propio dominio |
+
+**Evita:** `http://hidrobot` (sin dominio), `http://api:3000` si Node-RED **no** está en la red Docker de HidroBot, o una URL que solo funciona en el navegador pero no desde el proceso de Node-RED.
+
+Comprueba desde la máquina donde corre Node-RED:
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}" -H "X-Ingest-Token: TU_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mqttId":"hb-test","status":"online"}' \
+  "TU_API_URL/api/ingest/status"
+```
+
+Debe responder `200`. Ajusta la variable de entorno del contenedor/servicio Node-RED (`API_URL`, `INGEST_TOKEN`), reinicia Node-RED y vuelve a desplegar el flujo.
+
 ## Temas MQTT
 
 | Tema | Dirección | API |

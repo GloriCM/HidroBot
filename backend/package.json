@@ -12,6 +12,8 @@
     "migrate": "node src/db/migrate.js",
     "migrate:create": "node-pg-migrate create --migration-file-language cjs",
     "seed": "node src/seed/demo.js",
+    "check:syntax": "node scripts/syntax-check.mjs",
+    "check": "npm run check:syntax && npm test",
     "test": "node --test --test-concurrency=1 test/**/*.test.js"
   },
   "dependencies": {

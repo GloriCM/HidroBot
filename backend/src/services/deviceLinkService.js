@@ -226,10 +226,10 @@ export async function unlinkDevice(app, userId, deviceId, { keepHistory = true }
 
   await publishVinculacion(app, unclaimed.mqtt_id, { estado: 'desvinculado' })
 
-  const codeInfo = await ensureClaimCode(app, unclaimed)
+  const codeInfo = await ensureClaimCode(app, unclaimed, { freshOnPresent: true })
   if (codeInfo.plain) {
     await publishVinculacion(app, unclaimed.mqtt_id, {
-  const codeInfo = await ensureClaimCode(app, unclaimed, { freshOnPresent: true })
+      estado: 'pendiente',
       codigo: codeInfo.plain,
       expira_en_s: codeInfo.expiresInSec,
       url: CLAIM_PORTAL_URL,
