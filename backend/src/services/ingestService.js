@@ -17,6 +17,7 @@ import { closeOpenIrrigation, insertIrrigationEvent, openIrrigation } from '../r
 import { insertTelemetry } from '../repos/telemetry.js'
 import { getZoneSettings } from '../repos/zones.js'
 import { raiseAlert } from './alertService.js'
+import { IRRIGATION_HARD_MAX_SECONDS, IRRIGATION_STOP_HUMIDITY_PCT } from '../lib/irrigationLimits.js'
 import { decideIrrigation } from './irrigationDecision.js'
 import { publishDeviceConfig } from './panelService.js'
 import { evaluateTankEmailAfterTelemetry } from './tankEmailNotifier.js'
@@ -49,7 +50,11 @@ function mapConfig(settings, calibration, device) {
     mqttId: device.mqtt_id,
     zoneId: device.zone_id,
     umbral_humedad: Number(settings?.threshold_pct ?? 35),
-    duracion_max_s: Number(settings?.max_irrigation_seconds ?? 60),
+    parar_humedad_pct: IRRIGATION_STOP_HUMIDITY_PCT,
+    duracion_max_s: Math.min(
+      Number(settings?.max_irrigation_seconds ?? 60),
+      IRRIGATION_HARD_MAX_SECONDS,
+    ),
     modo: settings?.mode || 'auto',
     tank_min_pct: Number(settings?.tank_min_pct ?? 10),
     battery_min_pct: Number(settings?.battery_min_pct ?? 30),
@@ -223,12 +228,14 @@ export async function ingestTelemetry(app, input) {
     tankPct,
     batteryPct,
     source,
+    pumpOn: pump,
   })
 
   return {
     regar: decision.regar,
     segundos: decision.segundos,
     motivo: decision.motivo,
+    code: decision.code,
     telemetry: {
       humidity_pct: humidityPct,
       tank_pct: tankPct,

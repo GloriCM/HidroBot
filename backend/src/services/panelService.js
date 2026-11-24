@@ -1,4 +1,5 @@
 import { AppError } from '../lib/errors.js'
+import { IRRIGATION_HARD_MAX_SECONDS, IRRIGATION_STOP_HUMIDITY_PCT } from '../lib/irrigationLimits.js'
 import { isDeviceOnline } from '../lib/deviceOnline.js'
 import { validateTankDistancePair } from '../lib/tankCalibration.js'
 import { listAlertsForUser, markAlertRead } from '../repos/alerts.js'
@@ -285,7 +286,11 @@ async function pushConfig(app, device) {
   const calibration = await ensureCalibration(app.db, device.id)
   const payload = {
     umbral_humedad: Number(settings?.threshold_pct ?? 35),
-    duracion_max_s: Number(settings?.max_irrigation_seconds ?? 60),
+    parar_humedad_pct: IRRIGATION_STOP_HUMIDITY_PCT,
+    duracion_max_s: Math.min(
+      Number(settings?.max_irrigation_seconds ?? 60),
+      IRRIGATION_HARD_MAX_SECONDS,
+    ),
     modo: settings?.mode || 'auto',
     tank_min_pct: Number(settings?.tank_min_pct ?? 10),
     battery_min_pct: Number(settings?.battery_min_pct ?? 30),
@@ -525,7 +530,10 @@ export async function queueIrrigate(app, userId, zoneId, seconds) {
   if (!device) throw new AppError(400, 'No hay dispositivo en esta zona')
 
   const settings = await getZoneSettings(app.db, zoneId)
-  const maxSeconds = Number(settings?.max_irrigation_seconds ?? 60)
+  const maxSeconds = Math.min(
+    Number(settings?.max_irrigation_seconds ?? 60),
+    IRRIGATION_HARD_MAX_SECONDS,
+  )
   const requested = Math.min(Math.max(Number(seconds || maxSeconds), 1), maxSeconds)
   const expiresAt = new Date(Date.now() + app.config.COMMAND_TTL_MINUTES * 60 * 1000)
 

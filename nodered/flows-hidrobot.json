@@ -154,7 +154,7 @@
     "type": "function",
     "z": "hidrobot_tab",
     "name": "si regar → MQTT comando",
-    "func": "const body = msg.payload || {};\nconst mqttId = msg.mqttId;\nif (!mqttId) return null;\nif (body.regar === true) {\n  msg.topic = 'hidrobot/' + mqttId + '/comando';\n  msg.payload = { accion: 'regar', segundos: body.segundos || 0 };\n  msg.qos = 1;\n  msg.retain = false;\n  return msg;\n}\nif (body.regar === false && body.motivo && String(body.motivo).includes('detener')) {\n  msg.topic = 'hidrobot/' + mqttId + '/comando';\n  msg.payload = { accion: 'detener' };\n  msg.qos = 1;\n  msg.retain = false;\n  return msg;\n}\nreturn null;",
+    "func": "const body = msg.payload || {};\nconst mqttId = msg.mqttId;\nif (!mqttId) return null;\nif (body.regar === true) {\n  msg.topic = 'hidrobot/' + mqttId + '/comando';\n  msg.payload = { accion: 'regar', segundos: body.segundos || 0 };\n  msg.qos = 1;\n  msg.retain = false;\n  return msg;\n}\nif (body.regar === false && body.code === 'stop') {\n  msg.topic = 'hidrobot/' + mqttId + '/comando';\n  msg.payload = { accion: 'detener' };\n  msg.qos = 1;\n  msg.retain = false;\n  return msg;\n}\nreturn null;",
     "outputs": 1,
     "x": 820,
     "y": 80,

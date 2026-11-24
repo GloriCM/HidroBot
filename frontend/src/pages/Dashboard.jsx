@@ -1039,7 +1039,7 @@ export default function Dashboard() {
         <PageHeader title={sectionCopy.title} description={`${sectionCopy.description} · ${now}`} />
       ) : null}
 
-      {section === 'perfil' ? (
+          {section === 'perfil' ? (
         <PanelCard className="mx-auto w-full max-w-md p-6">
               <PageHeader title="Perfil" description="Datos de cuenta y seguridad." />
               <div className="mt-4 grid grid-cols-2 rounded-full bg-white/80 p-1">
@@ -1055,7 +1055,7 @@ export default function Dashboard() {
                     <span className="relative mx-auto grid h-24 w-24 place-items-center overflow-hidden rounded-full border-4 border-white bg-[#1276cc] text-3xl font-extrabold text-white shadow">
                       {photo ? <img className="h-full w-full object-cover" src={photo} alt="" /> : user.name.slice(0, 1).toUpperCase()}
                       <span className="absolute right-0 bottom-0 grid h-7 w-7 place-items-center rounded-full bg-white text-[#0a3d6b] shadow"><Camera className="h-3.5 w-3.5" /></span>
-                    </span>
+                      </span>
                     <input className="sr-only" type="file" accept="image/*" onChange={onPhoto} />
                   </label>
                   {[['name', 'Nombre'], ['email', 'Correo'], ['garden', 'Jardín']].map(([key, label]) => (
@@ -1165,7 +1165,7 @@ export default function Dashboard() {
                     >
                       <Square className="h-3.5 w-3.5 fill-current" /> Detener
                     </BtnSecondary>
-                  </div>
+                </div>
                 }
               />
               <PanelCard className="p-4 sm:col-span-2 xl:col-span-1">
@@ -1196,13 +1196,13 @@ export default function Dashboard() {
                         {devicesList.devices.map((d) => (
                           <li key={d.id} className="pc-legacy-card rounded-xl border border-[#d7e3ee] bg-white/80 p-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div>
+                <div>
                                 <p className="font-extrabold">{d.name}</p>
                                 <p className="text-[#6b8494]">{d.zoneName} · {d.mqttId}</p>
                                 <p className="text-xs">
                                   FW {d.firmwareVersion || '—'} · {d.online ? 'En línea' : 'Desconectado'}
                                 </p>
-                              </div>
+                </div>
                               <button
                                 type="button"
                                 className="rounded-full border border-[#d7e3ee] px-3 py-1 text-xs font-bold"
@@ -1211,7 +1211,7 @@ export default function Dashboard() {
                               >
                                 Desvincular
                               </button>
-                            </div>
+              </div>
                           </li>
                         ))}
                       </ul>
@@ -1241,7 +1241,7 @@ export default function Dashboard() {
                         >
                           Reclamar con código
                         </button>
-                      </div>
+              </div>
                     ) : null}
                     {devicesList.previous?.length ? (
                       <div className="mt-4 border-t border-[#e7eef3] pt-3">
@@ -1251,7 +1251,7 @@ export default function Dashboard() {
                             <li key={p.ownershipId}>{p.name} · {p.zoneName}</li>
                           ))}
                         </ul>
-                      </div>
+                </div>
                     ) : null}
               </PanelCard>
             ) : null}
@@ -1264,7 +1264,7 @@ export default function Dashboard() {
                       <ChartColumn className="h-4 w-4" /> Telemetría
                     </h2>
                     <div className="flex gap-1 rounded-full bg-slate-100 p-1 text-xs font-bold text-slate-600">
-                      {['1h', '6h', '12h', '24h'].map((item) => (
+                    {['1h', '6h', '12h', '24h'].map((item) => (
                         <button
                           key={item}
                           type="button"
@@ -1275,11 +1275,11 @@ export default function Dashboard() {
                             if (summary.device?.id) void loadSeries(summary.device.id, item)
                           }}
                         >
-                          {item}
-                        </button>
-                      ))}
-                    </div>
-                  </header>
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </header>
                   <HistoryChart data={chartData} rangeMeta={seriesMeta} irrigations={chartIrrigations} />
                 </PanelCard>
                 <PanelCard className="p-4 md:p-5">
@@ -1338,11 +1338,11 @@ export default function Dashboard() {
                             </label>
                           ))}
                           <label className="flex items-center justify-between text-sm font-bold text-[#0a3d6b]">
-                            Modo automático
+                  Modo automático
                             <button type="button" className={`h-7 w-12 rounded-full p-1 ${auto ? 'bg-[#2fbe59]' : 'bg-[#24527a]'}`} onClick={() => setSettingsDraft((c) => ({ ...c, mode: auto ? 'manual' : 'auto' }))}>
-                              <i className={`block h-5 w-5 rounded-full bg-white transition ${auto ? 'translate-x-5' : ''}`} />
-                            </button>
-                          </label>
+                    <i className={`block h-5 w-5 rounded-full bg-white transition ${auto ? 'translate-x-5' : ''}`} />
+                  </button>
+                </label>
                           <label className="flex items-center justify-between text-sm font-bold text-[#0a3d6b]">
                             Manual con batería baja
                             <input type="checkbox" checked={Boolean(settingsDraft.allowManualOnBattery)} onChange={(e) => setSettingsDraft((c) => ({ ...c, allowManualOnBattery: e.target.checked }))} />
@@ -1438,9 +1438,9 @@ export default function Dashboard() {
                                   >
                                     Quitar
                                   </button>
-                                </li>
-                              ))}
-                            </ul>
+                    </li>
+                  ))}
+                </ul>
                             {(notifDraft.extraRecipients || []).length < 3 ? (
                               <div className="flex gap-2">
                                 <input
@@ -1520,7 +1520,7 @@ export default function Dashboard() {
                               onClick={() => { void openTankWizard() }}
                             >
                               Iniciar calibración
-                            </button>
+                  </button>
                           </div>
 
                           <div className="rounded-2xl border border-[#d7e3ee] bg-white/75 p-4">
@@ -1621,7 +1621,7 @@ export default function Dashboard() {
               </PanelCard>
             ) : null}
           </section>
-        </div>
+      </div>
       )}
     </PanelChrome>
 

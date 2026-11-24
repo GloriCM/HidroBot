@@ -7,6 +7,7 @@ import {
   findActiveClaimCode,
   findValidCodeForClaim,
   insertClaimCode,
+  invalidateUnusedCodes,
   markClaimCodeUsed,
   recordClaimAttempt,
 } from '../repos/claimCodes.js'
@@ -37,16 +38,20 @@ export function claimCodeTtlMs(config) {
   return minutes * 60 * 1000
 }
 
-async function ensureClaimCode(app, device) {
+async function ensureClaimCode(app, device, { freshOnPresent = false } = {}) {
   const now = new Date()
   const existing = await findActiveClaimCode(app.db, device.id, now)
-  if (existing) {
+  if (existing && !freshOnPresent) {
     return {
       expiresAt: existing.expires_at,
       expiresInSec: Math.max(0, Math.floor((new Date(existing.expires_at).getTime() - now.getTime()) / 1000)),
       codeHash: existing.code_hash,
       regenerated: false,
+      plain: null,
     }
+  }
+  if (existing && freshOnPresent) {
+    await invalidateUnusedCodes(app.db, device.id)
   }
   const generated = generateClaimCode()
   const expiresAt = new Date(now.getTime() + claimCodeTtlMs(app.config))
@@ -73,10 +78,6 @@ export async function publishVinculacion(app, mqttId, payload) {
 }
 
 async function publishPendingLink(app, device, codeInfo) {
-  if (!codeInfo.plain && !codeInfo.regenerated) {
-    const generated = generateClaimCode()
-    codeInfo = { ...codeInfo, plain: generated.plain }
-  }
   if (!codeInfo.plain) return null
   return publishVinculacion(app, device.mqtt_id, {
     estado: 'pendiente',
@@ -228,7 +229,7 @@ export async function unlinkDevice(app, userId, deviceId, { keepHistory = true }
   const codeInfo = await ensureClaimCode(app, unclaimed)
   if (codeInfo.plain) {
     await publishVinculacion(app, unclaimed.mqtt_id, {
-      estado: 'pendiente',
+  const codeInfo = await ensureClaimCode(app, unclaimed, { freshOnPresent: true })
       codigo: codeInfo.plain,
       expira_en_s: codeInfo.expiresInSec,
       url: CLAIM_PORTAL_URL,

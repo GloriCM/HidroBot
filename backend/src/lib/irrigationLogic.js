@@ -1,3 +1,5 @@
+import { IRRIGATION_HARD_MAX_SECONDS } from './irrigationLimits.js'
+
 /**
  * Decisión de riego pura (sin DB), para tests.
  *
@@ -24,7 +26,7 @@
  * }} input
  */
 export function decideIrrigationLogic(input) {
-  const maxSeconds = Math.max(1, Number(input.maxSeconds) || 60)
+  const maxSeconds = Math.min(Math.max(1, Number(input.maxSeconds) || 60), IRRIGATION_HARD_MAX_SECONDS)
   const pending = input.pending || null
   const tankPct = input.tankPct
   const tankMissing = tankPct == null || !Number.isFinite(Number(tankPct))

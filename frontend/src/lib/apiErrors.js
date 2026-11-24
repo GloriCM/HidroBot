@@ -35,6 +35,13 @@ export function formatApiErrorMessage(message, status = 0) {
     }
   }
 
+  if (raw.includes('Código incorrecto') || raw.includes('caducado')) {
+    return raw
+  }
+  if (raw === 'Zona no encontrada') {
+    return 'No se encontró tu jardín. Recarga la página e inténtalo de nuevo.'
+  }
+
   return raw
 }
 

@@ -1,3 +1,4 @@
+import { IRRIGATION_HARD_MAX_SECONDS, IRRIGATION_STOP_HUMIDITY_PCT } from '../lib/irrigationLimits.js'
 import { decideIrrigationLogic } from '../lib/irrigationLogic.js'
 import { ackCommand, expirePendingCommands, nextPendingCommand } from '../repos/commands.js'
 import { closeOpenIrrigation, insertIrrigationEvent, openIrrigation } from '../repos/irrigations.js'
@@ -13,11 +14,28 @@ export async function decideIrrigation(db, {
   tankPct,
   batteryPct,
   source,
+  pumpOn = false,
 }) {
   await expirePendingCommands(db, device.id)
 
   const settings = await getZoneSettings(db, device.zone_id)
-  const maxSeconds = Number(settings?.max_irrigation_seconds ?? 60)
+  const maxSeconds = Math.min(
+    Number(settings?.max_irrigation_seconds ?? 60),
+    IRRIGATION_HARD_MAX_SECONDS,
+  )
+
+  if (pumpOn && Number(humidityPct) >= IRRIGATION_STOP_HUMIDITY_PCT) {
+    await closeOpenIrrigation(db, device.zone_id, {
+      reason: 'humidity_target',
+      secondsActual: null,
+    })
+    return {
+      regar: false,
+      segundos: 0,
+      motivo: `Comando detener: humedad ${Number(humidityPct).toFixed(0)}% ≥ ${IRRIGATION_STOP_HUMIDITY_PCT}%`,
+      code: 'stop',
+    }
+  }
   const pending = await nextPendingCommand(db, device.id)
 
   const decision = decideIrrigationLogic({
@@ -79,11 +97,17 @@ export async function decideIrrigation(db, {
   }
 
   const open = await openIrrigation(db, device.zone_id)
-  const threshold = Number(settings?.threshold_pct ?? 35)
-  if (open && humidityPct >= threshold) {
+  if (open && Number(humidityPct) >= IRRIGATION_STOP_HUMIDITY_PCT) {
     await closeOpenIrrigation(db, device.zone_id, {
+      reason: 'humidity_target',
       secondsActual: open.seconds_requested,
     })
+    return {
+      regar: false,
+      segundos: 0,
+      motivo: `Comando detener: humedad ≥ ${IRRIGATION_STOP_HUMIDITY_PCT}%`,
+      code: 'stop',
+    }
   }
 
   return decision

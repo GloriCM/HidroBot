@@ -52,7 +52,9 @@ const float FACTOR_DIVISOR = 122.0 / 22.0;   // (100k + 22k) / 22k
 const float UMBRAL_HAY_RED_V = 9.0;          // por encima de esto: hay red
 const unsigned long INTERVALO_TELEMETRIA_MS = 10000;  // envio al servidor
 const unsigned long INTERVALO_LECTURA_MS = 10000;     // lectura local de sensores
-const unsigned long RIEGO_MAX_SEG = 120;     // tope de seguridad local
+const unsigned long RIEGO_MAX_SEG = 120;     // tope si el servidor pide más (se recorta abajo)
+const unsigned long RIEGO_TOPE_SEG_DEF = 15; // corte forzado por ciclo (seguridad)
+const float PARAR_HUMEDAD_PCT_DEF = 80.0f;   // apagar bomba al llegar a esta humedad
 const unsigned long MQTT_CMD_TIMEOUT_MS = 10000;      // connect/publish/subscribe (latencia alta)
 const unsigned long WS_ESPERA_MS = 15000;             // esperar a que el WebSocket abra
 const unsigned long MQTT_REINTENTO_MS = 4000;         // pausa entre intentos fallidos
@@ -87,6 +89,8 @@ String vinculacionPendiente = "";
 bool bombaEncendida = false;
 unsigned long bombaInicioMs = 0;
 unsigned long bombaDuracionMs = 0;
+unsigned long riegoTopeSeg = RIEGO_TOPE_SEG_DEF;
+float pararHumedadPct = PARAR_HUMEDAD_PCT_DEF;
 
 unsigned long ultimaTelemetriaMs = 0;
 unsigned long ultimaLecturaMs = 0;
@@ -274,11 +278,22 @@ void actualizarPantalla() {
     pantalla.setTextSize(1);
     pantalla.println("Vincula tu");
     pantalla.println("HidroBot");
-    pantalla.setTextSize(2);
-    pantalla.println(codigoVinculacion.length() ? codigoVinculacion : "------");
+    pantalla.setTextSize(1);
+    bool codigoVigente =
+        codigoVinculacion.length() > 0 && (codigoExpiraMs == 0 || codigoExpiraMs > millis());
+    if (codigoVigente) {
+      pantalla.setTextSize(2);
+      pantalla.println(codigoVinculacion);
+    } else if (codigoVinculacion.length() > 0) {
+      pantalla.println("Codigo caducado");
+      pantalla.println("Reinicia HidroBot");
+    } else {
+      pantalla.setTextSize(2);
+      pantalla.println("------");
+    }
     pantalla.setTextSize(1);
     pantalla.println("hidrobot.jelabs.net");
-    if (codigoExpiraMs > millis()) {
+    if (codigoVigente && codigoExpiraMs > millis()) {
       unsigned long rest = (codigoExpiraMs - millis()) / 1000UL;
       pantalla.printf("Quedan %lum %lus\n", rest / 60, rest % 60);
     }
@@ -393,11 +408,14 @@ void encenderBomba(unsigned long segundos) {
     return;
   }
   segundos = constrain(segundos, 1UL, RIEGO_MAX_SEG);
+  if (segundos > riegoTopeSeg) segundos = riegoTopeSeg;
+  bombaDuracionMs = segundos * 1000UL;
+  if (bombaDuracionMs > riegoTopeSeg * 1000UL) bombaDuracionMs = riegoTopeSeg * 1000UL;
   escribirRele(PIN_RELE1, true);
   bombaEncendida = true;
   bombaInicioMs = millis();
-  bombaDuracionMs = segundos * 1000UL;
-  Serial.printf("Bomba encendida por %lu s\n", segundos);
+  Serial.printf("Bomba encendida por %lu s (tope %lu s, parar >= %.0f%%)\n",
+                segundos, riegoTopeSeg, pararHumedadPct);
   publicarEvento("riego_inicio", segundos);
 }
 
@@ -461,8 +479,20 @@ void procesarConfigPendiente() {
 
   // Ajustes globales opcionales (si faltan, se conservan los actuales).
   if (!doc["umbral_humedad"].isNull()) {
-    // reservado para riego local futuro; hoy solo se registra
     Serial.printf("umbral_humedad=%d\n", doc["umbral_humedad"].as<int>());
+  }
+  if (!doc["parar_humedad_pct"].isNull()) {
+    pararHumedadPct = doc["parar_humedad_pct"].as<float>();
+    if (pararHumedadPct < 1.0f) pararHumedadPct = 1.0f;
+    if (pararHumedadPct > 100.0f) pararHumedadPct = 100.0f;
+    Serial.printf("parar_humedad_pct=%.1f\n", pararHumedadPct);
+  }
+  if (!doc["duracion_max_s"].isNull()) {
+    unsigned long d = doc["duracion_max_s"].as<unsigned long>();
+    if (d < 1) d = 1;
+    if (d > RIEGO_MAX_SEG) d = RIEGO_MAX_SEG;
+    riegoTopeSeg = d;
+    Serial.printf("duracion_max_s=%lu\n", riegoTopeSeg);
   }
 
   JsonVariant cal = doc["calibracion"];
@@ -908,17 +938,26 @@ void loop() {
 
   // Seguridad local de la bomba
   if (bombaEncendida) {
-    if (millis() - bombaInicioMs >= bombaDuracionMs) {
-      apagarBomba("tiempo cumplido");
+    const unsigned long transcurridoMs = millis() - bombaInicioMs;
+    const unsigned long topeMs = riegoTopeSeg * 1000UL;
+    if (transcurridoMs >= bombaDuracionMs || transcurridoMs >= topeMs) {
+      apagarBomba(transcurridoMs >= topeMs ? "tope seguridad" : "tiempo cumplido");
       enviarTelemetria();
-    } else if (millis() - ultimoChequeoTanqueMs > 2000) {
+    } else if (millis() - ultimoChequeoTanqueMs > 1000) {
       ultimoChequeoTanqueMs = millis();
-      float d = leerDistancia();
-      if (d >= 0) distanciaCm = d;
-      if (distanciaCm >= distanciaVacioCm) {
-        apagarBomba("tanque vacio");
-        publicarEvento("bloqueo_tanque_vacio", 0);
+      sueloRaw = leerSuelo();
+      float hum = humedadPctDesdeRaw(sueloRaw);
+      if (hum >= pararHumedadPct) {
+        apagarBomba("humedad objetivo");
         enviarTelemetria();
+      } else {
+        float d = leerDistancia();
+        if (d >= 0) distanciaCm = d;
+        if (distanciaCm >= distanciaVacioCm) {
+          apagarBomba("tanque vacio");
+          publicarEvento("bloqueo_tanque_vacio", 0);
+          enviarTelemetria();
+        }
       }
     }
   }

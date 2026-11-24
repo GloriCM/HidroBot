@@ -76,7 +76,7 @@ test('batería baja permite manual si allowManualOnBattery', () => {
   })
   assert.equal(r.code, 'manual')
   assert.equal(r.regar, true)
-  assert.equal(r.segundos, 60)
+  assert.equal(r.segundos, 15)
 })
 
 test('comando irrigate y auto por humedad', () => {
