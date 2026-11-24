@@ -50,6 +50,7 @@ export async function decideIrrigation(db, {
     thresholdPct: Number(settings?.threshold_pct ?? 35),
     mode: settings?.mode || 'auto',
     maxSeconds,
+    pumpOn,
   })
 
   if (decision.code === 'stop' && pending) {

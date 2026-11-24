@@ -85,5 +85,7 @@ test('comando irrigate y auto por humedad', () => {
     'manual',
   )
   assert.equal(decideIrrigationLogic({ ...base, humidityPct: 20 }).code, 'auto')
+  assert.equal(decideIrrigationLogic({ ...base, humidityPct: 20, pumpOn: true }).regar, false)
   assert.equal(decideIrrigationLogic({ ...base, humidityPct: 50 }).code, 'idle')
+  assert.equal(decideIrrigationLogic({ ...base, humidityPct: 20, mode: 'manual' }).code, 'idle')
 })

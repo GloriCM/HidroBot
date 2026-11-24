@@ -8,7 +8,7 @@ import { IRRIGATION_HARD_MAX_SECONDS } from './irrigationLimits.js'
  * 2. tanque bajo mínimo (solo si hay lectura válida)
  * 3. batería baja (auto bloqueado; manual solo si allowManualOnBattery)
  * 4. irrigate pendiente
- * 5. auto + humedad bajo umbral (bloqueado si no hay lectura de tanque)
+ * 5. auto + humedad bajo umbral (no re-dispara si la bomba ya está ON)
  * 6. no regar
  *
  * @param {{
@@ -23,6 +23,7 @@ import { IRRIGATION_HARD_MAX_SECONDS } from './irrigationLimits.js'
  *   thresholdPct: number,
  *   mode: 'auto'|'manual',
  *   maxSeconds: number,
+ *   pumpOn?: boolean,
  * }} input
  */
 export function decideIrrigationLogic(input) {
@@ -76,6 +77,14 @@ export function decideIrrigationLogic(input) {
         segundos: 0,
         motivo: 'Sin lectura de tanque: riego automático bloqueado',
         code: 'tank_sensor_missing',
+      }
+    }
+    if (input.pumpOn) {
+      return {
+        regar: false,
+        segundos: 0,
+        motivo: 'Bomba ya en marcha; no se reinicia el ciclo',
+        code: 'idle',
       }
     }
     return {

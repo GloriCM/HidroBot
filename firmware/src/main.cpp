@@ -33,7 +33,7 @@ const char* MQTT_HOST = "mqtt.jelabs.net";
 const uint16_t MQTT_PORT = 443;
 const char* MQTT_PATH = "/mqtt";
 const char* MQTT_USER = "esp32";
-const char* FIRMWARE_VERSION = "1.1.0";
+const char* FIRMWARE_VERSION = "1.1.1";
 
 // ===================== 3. PINES (segun el diagrama) =====================
 const int PIN_V_RED = 36;      // divisor 100k/22k de la red
@@ -402,6 +402,10 @@ void apagarBomba(const char* motivo) {
 
 void encenderBomba(unsigned long segundos) {
   if (!vinculado) return;
+  if (bombaEncendida) {
+    Serial.println("Riego ignorado: la bomba ya esta encendida (no se reinicia el tope)");
+    return;
+  }
   if (distanciaCm < 0 || distanciaCm >= distanciaVacioCm) {
     Serial.println("Riego bloqueado: tanque vacio o sin lectura del nivel");
     publicarEvento("bloqueo_tanque_vacio", 0);
